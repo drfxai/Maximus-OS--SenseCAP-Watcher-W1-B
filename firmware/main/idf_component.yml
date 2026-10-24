@@ -1,0 +1,8 @@
+dependencies:
+  idf: ">=5.2"
+  sensecap-watcher:
+    override_path: "../deps/seeed/components/sensecap-watcher"
+  esp_io_expander_pca95xx_16bit:
+    override_path: "../deps/seeed/components/esp_io_expander_pca95xx_16bit"
+  sscma_client:
+    override_path: "../deps/seeed/components/sscma_client"

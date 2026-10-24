@@ -1,0 +1,30 @@
+{
+  "name": "maximus-os-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "cloudflare": {
+    "label": "Maximus OS relay",
+    "products": [
+      "Workers",
+      "KV",
+      "Workers AI"
+    ],
+    "bindings": {
+      "TELEGRAM_BOT_TOKEN": {
+        "description": "Bot token from @BotFather"
+      },
+      "DEVICE_KEY": {
+        "description": "A long random string; the same value goes into the installer page"
+      }
+    }
+  }
+}

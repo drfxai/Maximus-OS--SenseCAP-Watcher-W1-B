@@ -1,0 +1,97 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test worker/test/*.test.js
+
+  ui-sim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git clone --depth 1 --branch v8.4.0 https://github.com/lvgl/lvgl.git .sim-deps/lvgl
+          pip install pillow
+          make -C sim
+          mkdir -p out && ./sim/render out
+          python3 tools/sim_montage.py out screens.png 5
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-screens
+          path: screens.png
+
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.2.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch board support package
+        run: |
+          git config --global --add safe.directory '*'
+          tools/fetch-deps.sh
+      - name: Build
+        shell: bash
+        working-directory: firmware
+        run: |
+          . $IDF_PATH/export.sh
+          idf.py set-target esp32s3
+          idf.py build
+      - name: Merge into one image (bootloader + partition table + app)
+        shell: bash
+        working-directory: firmware/build
+        run: |
+          . $IDF_PATH/export.sh
+          mkdir -p ../../site/firmware
+          esptool.py --chip esp32s3 merge_bin -o ../../site/firmware/maximus-os-full.bin @flash_args
+          ls -l ../../site/firmware
+          size=$(stat -c %s ../../site/firmware/maximus-os-full.bin)
+          echo "full image: $size bytes"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: maximus-os-site
+          path: site
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: site/firmware/maximus-os-full.bin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pages:
+    if: github.ref == 'refs/heads/main'
+    needs: [firmware, worker]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: maximus-os-site
+          path: site
+      - uses: actions/configure-pages@v5
+        continue-on-error: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

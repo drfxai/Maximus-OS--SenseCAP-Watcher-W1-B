@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maximus OS Installer</title>
+<meta name="description" content="One-click installer for Maximus OS on the SenseCAP Watcher W1-B.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%232f7bff'/%3E%3Cpath d='M9 10h14v3h-5.5v10h-3V13H9z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #07090f; --panel: #0e1320; --panel2: #131a2b; --line: #1f2940;
+  --text: #eef1f7; --dim: #8e99b0; --blue: #2f7bff; --green: #2ed573; --red: #ff4757; --amber: #ffa502;
+  --radius: 16px;
+}
+:root[data-theme="light"] {
+  --bg: #f4f6fb; --panel: #ffffff; --panel2: #eef1f8; --line: #d9dfec;
+  --text: #0e1320; --dim: #55627d;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f4f6fb; --panel: #ffffff; --panel2: #eef1f8; --line: #d9dfec;
+    --text: #0e1320; --dim: #55627d;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+header { text-align: center; padding: 8px 0 28px; }
+header h1 { font-size: 2rem; letter-spacing: .14em; margin: 12px 0 4px; font-weight: 600; }
+header p { color: var(--dim); margin: 0; }
+.logo { width: 72px; height: 72px; border-radius: 50%; margin: 0 auto; display: grid; place-items: center;
+  background: radial-gradient(circle at 35% 30%, #4a8dff, #1b3a80 70%); box-shadow: 0 0 40px #2f7bff55; font-size: 34px; font-weight: 700; color: #fff; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; margin: 16px 0; }
+.card h2 { margin: 0 0 4px; font-size: 1.15rem; display: flex; align-items: center; gap: 10px; }
+.num { width: 28px; height: 28px; border-radius: 50%; background: var(--blue); color: #fff; display: inline-grid; place-items: center; font-size: .9rem; flex: none; }
+.card.done .num { background: var(--green); }
+.sub { color: var(--dim); margin: 0 0 16px; }
+label { display: block; font-size: .85rem; color: var(--dim); margin: 12px 0 4px; }
+input, select, textarea { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--panel2); color: var(--text); font: inherit; }
+input:focus, select:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .row { grid-template-columns: 1fr; } }
+button, .btn { appearance: none; border: 0; border-radius: 12px; padding: 12px 18px; font: inherit; font-weight: 600; cursor: pointer;
+  background: var(--blue); color: #fff; text-decoration: none; display: inline-block; }
+button.secondary, .btn.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; align-items: center; }
+.log { font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #000; color: #b6f3c8; border-radius: 10px;
+  padding: 12px; min-height: 64px; max-height: 180px; overflow: auto; white-space: pre-wrap; margin-top: 14px; }
+.chip { display: inline-flex; gap: 6px; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: .8rem; background: var(--panel2); border: 1px solid var(--line); color: var(--dim); }
+.chip.ok { color: var(--green); border-color: #2ed57355; }
+.chip.bad { color: var(--red); border-color: #ff475755; }
+.warn { background: #ffa50215; border: 1px solid #ffa50255; color: var(--amber); padding: 10px 14px; border-radius: 12px; margin: 12px 0; display: none; }
+details { margin-top: 14px; }
+summary { cursor: pointer; color: var(--dim); }
+code { background: var(--panel2); padding: 2px 6px; border-radius: 6px; font-size: .9em; }
+ol { padding-left: 20px; } li { margin: 4px 0; }
+esp-web-install-button button[slot="activate"] { font-size: 1rem; }
+.hero-btn button { padding: 14px 26px; font-size: 1.05rem; }
+.note { color: var(--dim); font-size: .85rem; }
+a { color: var(--blue); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo" aria-hidden="true">M</div>
+    <h1>MAXIMUS OS</h1>
+    <p>Install on the SenseCAP Watcher W1-B in one click</p>
+  </header>
+
+  <div class="warn" id="nosupport">
+    This installer needs Web Serial. Open this page in <b>Chrome, Edge or Opera</b> on a computer (not Safari, Firefox or a phone).
+  </div>
+
+  <section class="card" id="c1">
+    <h2><span class="num">1</span> Install the firmware</h2>
+    <p class="sub">Plug the Watcher into your computer with a USB-C <i>data</i> cable, then press the button and pick the Watcher's serial port. This writes the bootloader, partition table and Maximus OS in one go, so it also works on a completely erased device.</p>
+    <div class="hero-btn">
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate">Install Maximus OS</button>
+        <span slot="unsupported">Your browser can't flash over USB. Use Chrome or Edge on a computer.</span>
+        <span slot="not-allowed">Web Serial needs HTTPS. Open this page from its https:// address.</span>
+      </esp-web-install-button>
+    </div>
+    <details>
+      <summary>Nothing shows up in the port list?</summary>
+      <ol>
+        <li>Use a USB-C cable that carries data (some charge-only cables don't).</li>
+        <li>If the device was wiped it may not enumerate by itself: <b>hold the knob while plugging in the cable</b>, then press Install.</li>
+        <li>On Windows the first time, Windows may need a moment to install the "USB JTAG/serial debug unit" driver.</li>
+      </ol>
+    </details>
+    <div class="actions"><button class="secondary" id="installed">I finished installing, continue</button></div>
+  </section>
+
+  <section class="card" id="c2">
+    <h2><span class="num">2</span> Connect to Wi-Fi and your relay</h2>
+    <p class="sub">These settings are sent to the watch over the same cable and stored on the device. Wi-Fi must be 2.4 GHz.</p>
+    <div class="row">
+      <div><label for="ssid">Wi-Fi name</label><input id="ssid" autocomplete="off" placeholder="My Network"></div>
+      <div><label for="pass">Wi-Fi password</label><input id="pass" type="password" autocomplete="off"></div>
+    </div>
+    <div class="row">
+      <div><label for="relay">Relay URL (your Cloudflare Worker)</label><input id="relay" placeholder="https://maximus-os.you.workers.dev" inputmode="url"></div>
+      <div><label for="key">Device key</label><input id="key" type="password" autocomplete="off" placeholder="the DEVICE_KEY you chose"></div>
+    </div>
+    <div class="row">
+      <div><label for="tz">Time zone</label><select id="tz"></select></div>
+      <div><label for="symbols">Coins to show (up to 4)</label><input id="symbols" value="BTC, ETH, SOL, BNB"></div>
+    </div>
+    <label for="holdings">Portfolio holdings (optional)</label>
+    <input id="holdings" placeholder="BTC=0.12, ETH=2.5, SOL=40">
+    <label><input type="checkbox" id="invert" style="width:auto"> Reverse the knob direction</label>
+    <p class="note">Don't have a relay yet? Do step 3 first: it takes about five minutes and is free.</p>
+    <div class="actions">
+      <button id="send">Send to watch</button>
+      <span class="chip" id="stWifi">Wi-Fi: -</span>
+      <span class="chip" id="stRelay">Relay: -</span>
+      <span class="chip" id="stFw">Firmware: -</span>
+    </div>
+    <div class="log" id="log" aria-live="polite">Waiting for you to connect the watch.</div>
+  </section>
+
+  <section class="card" id="c3">
+    <h2><span class="num">3</span> Telegram bot and AI relay</h2>
+    <p class="sub">The relay is a small Cloudflare Worker that runs your Telegram bot and the AI assistant. It keeps the bot token off the watch. One-time setup, free tier is enough.</p>
+    <ol>
+      <li>In Telegram, message <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>, send <code>/newbot</code> and copy the token it gives you.</li>
+      <li>Deploy the Worker: <a class="btn" target="_blank" rel="noopener" href="https://deploy.workers.cloudflare.com/?url=https://github.com/drfxai/Maximus-OS--SenseCAP-Watcher-W1-B/tree/main/worker">Deploy to Cloudflare</a><br>
+        <span class="note">When asked, paste the bot token as <code>TELEGRAM_BOT_TOKEN</code> and pick any long random string as <code>DEVICE_KEY</code>. Prefer the command line? See <code>docs/CLOUDFLARE.md</code>.</span></li>
+      <li>Paste the Worker URL and the same device key in step 2 above, then press the button below to register the webhook.</li>
+    </ol>
+    <div class="actions">
+      <button id="hook">Register Telegram webhook</button>
+      <span class="chip" id="stBot">Bot: -</span>
+    </div>
+    <div class="log" id="hooklog">Fill in the relay URL and device key first.</div>
+    <p class="note">Then open your bot in Telegram and send <b>/start</b> followed by the pairing code shown above. Only the first chat to pair can use the bot.</p>
+  </section>
+
+  <p class="note" style="text-align:center">Knob: turn = navigate · tap = confirm · hold 5 s = Home · hold 10 s = power off.</p>
+</main>
+
+<script type="module" src="https://unpkg.com/esp-web-tools@10.1.1/dist/web/install-button.js?module"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const hasSerial = "serial" in navigator;
+if (!hasSerial) $("nosupport").style.display = "block";
+
+/* ---- time zones (IANA label -> POSIX TZ rule the firmware understands) ---- */
+const ZONES = [
+  ["UTC", "UTC0"], ["London", "GMT0BST,M3.5.0/1,M10.5.0"], ["Dublin", "IST-1GMT0,M10.5.0,M3.5.0/1"],
+  ["Lisbon", "WET0WEST,M3.5.0/1,M10.5.0"], ["Paris / Berlin / Rome / Madrid", "CET-1CEST,M3.5.0,M10.5.0/3"],
+  ["Athens / Helsinki / Kyiv", "EET-2EEST,M3.5.0/3,M10.5.0/4"], ["Istanbul / Moscow", "<+03>-3"],
+  ["Dubai / Muscat", "<+04>-4"], ["Tehran", "<+0330>-3:30"], ["Karachi", "PKT-5"], ["Delhi / Mumbai", "IST-5:30"],
+  ["Dhaka", "<+06>-6"], ["Bangkok / Jakarta", "<+07>-7"], ["Singapore / Hong Kong / Perth", "<+08>-8"],
+  ["Shanghai / Taipei", "CST-8"], ["Tokyo / Seoul", "JST-9"], ["Sydney / Melbourne", "AEST-10AEDT,M10.1.0,M4.1.0/3"],
+  ["Brisbane", "AEST-10"], ["Auckland", "NZST-12NZDT,M9.5.0,M4.1.0/3"], ["Cairo", "EET-2EEST,M4.5.5/0,M10.5.4/24"],
+  ["Johannesburg", "SAST-2"], ["Lagos", "WAT-1"], ["Nairobi / Riyadh", "<+03>-3"],
+  ["Sao Paulo / Buenos Aires", "<-03>3"], ["Santiago", "<-04>4<-03>,M9.1.6/24,M4.1.6/24"], ["Bogota / Lima", "<-05>5"],
+  ["New York / Toronto", "EST5EDT,M3.2.0,M11.1.0"], ["Chicago / Mexico City", "CST6CDT,M3.2.0,M11.1.0"],
+  ["Denver", "MST7MDT,M3.2.0,M11.1.0"], ["Phoenix", "MST7"], ["Los Angeles / Vancouver", "PST8PDT,M3.2.0,M11.1.0"],
+  ["Anchorage", "AKST9AKDT,M3.2.0,M11.1.0"], ["Honolulu", "HST10"],
+];
+const tzSel = $("tz");
+ZONES.forEach(([n, rule], i) => tzSel.add(new Option(n, rule)));
+try {
+  const guess = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  const city = guess.split("/").pop().replace(/_/g, " ");
+  const idx = ZONES.findIndex(([n]) => n.toLowerCase().includes(city.toLowerCase()));
+  tzSel.selectedIndex = idx >= 0 ? idx : 0;
+} catch (_) { /* leave UTC */ }
+
+/* ---- remember non-secret fields in this browser ---- */
+const KEEP = ["ssid", "relay", "symbols", "holdings"];
+try { KEEP.forEach((k) => { const v = localStorage.getItem("mx_" + k); if (v) $(k).value = v; }); } catch (_) {}
+function remember() { try { KEEP.forEach((k) => localStorage.setItem("mx_" + k, $(k).value)); } catch (_) {} }
+
+/* ---- serial line protocol with the watch ---- */
+const log = (msg) => { const el = $("log"); el.textContent += "\n" + msg; el.scrollTop = el.scrollHeight; };
+const chip = (id, text, cls) => { const e = $(id); e.textContent = text; e.className = "chip " + (cls || ""); };
+
+class Link {
+  constructor(port) { this.port = port; this.lines = []; this.waiters = []; this.buf = ""; }
+  async open() {
+    await this.port.open({ baudRate: 115200 });
+    try { await this.port.setSignals({ dataTerminalReady: true, requestToSend: false }); } catch (_) {}
+    this.writer = this.port.writable.getWriter();
+    this.reader = this.port.readable.getReader();
+    this.pump();
+  }
+  async pump() {
+    const dec = new TextDecoder();
+    try {
+      for (;;) {
+        const { value, done } = await this.reader.read();
+        if (done) break;
+        this.buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = this.buf.search(/\r?\n/)) >= 0) {
+          const line = this.buf.slice(0, i).replace(/\r$/, "");
+          this.buf = this.buf.slice(i + 1);
+          this.onLine(line);
+        }
+      }
+    } catch (_) { /* port closed */ }
+  }
+  onLine(line) {
+    if (!line.startsWith("MAXIMUS_")) return;
+    for (const w of [...this.waiters]) if (w.test(line)) { this.waiters.splice(this.waiters.indexOf(w), 1); w.resolve(line); }
+  }
+  send(text) { return this.writer.write(new TextEncoder().encode(text + "\n")); }
+  expect(prefix, ms) {
+    return new Promise((resolve, reject) => {
+      const w = { test: (l) => l.startsWith(prefix) || l.startsWith("MAXIMUS_ERR"), resolve };
+      this.waiters.push(w);
+      setTimeout(() => { const i = this.waiters.indexOf(w); if (i >= 0) { this.waiters.splice(i, 1); reject(new Error("timeout waiting for " + prefix)); } }, ms);
+    });
+  }
+  async close() {
+    try { await this.reader.cancel(); } catch (_) {}
+    try { this.reader.releaseLock(); this.writer.releaseLock(); } catch (_) {}
+    try { await this.port.close(); } catch (_) {}
+  }
+}
+
+async function hello(link) {
+  for (let t = 0; t < 20; t++) {
+    await link.send("MAXIMUS_HELLO");
+    try { return await link.expect("MAXIMUS_READY", 800); } catch (_) { /* retry */ }
+  }
+  throw new Error("The watch did not answer. Is Maximus OS installed and running?");
+}
+
+function normSymbols(s) {
+  return s.split(/[\s,;]+/).filter(Boolean).slice(0, 4).map((x) => {
+    x = x.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return /(USDT|USD)$/.test(x) ? x : x + "USDT";
+  }).join(",");
+}
+function normHoldings(s) {
+  return s.split(/[\s,;]+/).filter(Boolean).map((x) => x.toUpperCase().replace(/[^A-Z0-9=.]/g, "")).join(",");
+}
+
+$("installed").onclick = () => { $("c1").classList.add("done"); $("c2").scrollIntoView({ behavior: "smooth" }); };
+
+$("send").onclick = async () => {
+  if (!hasSerial) return;
+  const relay = $("relay").value.trim().replace(/\/+$/, "");
+  if (relay && !/^https:\/\//.test(relay)) { log("The relay URL must start with https://"); return; }
+  if (!$("ssid").value.trim()) { log("Enter your Wi-Fi name first."); return; }
+  remember();
+  $("send").disabled = true;
+  let link;
+  try {
+    log("Choose the watch's serial port...");
+    link = new Link(await navigator.serial.requestPort());
+    await link.open();
+    log("Talking to the watch...");
+    const ready = await hello(link);
+    chip("stFw", "Firmware " + ready.replace("MAXIMUS_READY", "").trim(), "ok");
+    const cfg = {
+      ssid: $("ssid").value.trim(), pass: $("pass").value, relay, key: $("key").value.trim(),
+      tz: tzSel.value, symbols: normSymbols($("symbols").value), holdings: normHoldings($("holdings").value),
+      knob_invert: $("invert").checked,
+    };
+    await link.send("MAXIMUS_CFG " + JSON.stringify(cfg));
+    const ack = await link.expect("MAXIMUS_OK", 4000);
+    if (ack.startsWith("MAXIMUS_ERR")) throw new Error(ack);
+    log("Settings saved. Waiting for Wi-Fi...");
+    let ok = false;
+    for (let i = 0; i < 25 && !ok; i++) {
+      await new Promise((r) => setTimeout(r, 1200));
+      await link.send("MAXIMUS_STATUS");
+      let st;
+      try { st = JSON.parse((await link.expect("MAXIMUS_STATUS", 2500)).slice("MAXIMUS_STATUS".length)); } catch (_) { continue; }
+      chip("stWifi", st.wifi ? "Wi-Fi: connected " + st.ip : "Wi-Fi: connecting...", st.wifi ? "ok" : "");
+      if (relay) chip("stRelay", st.relay ? "Relay: reachable" : "Relay: checking...", st.relay ? "ok" : "");
+      ok = st.wifi && (!relay || st.relay);
+    }
+    log(ok ? "All set. The watch is online." : "Saved, but the watch is not fully online yet. Check the Wi-Fi password and relay details (the watch keeps retrying).");
+    if (ok) $("c2").classList.add("done");
+  } catch (e) {
+    log("Error: " + (e && e.message || e));
+  } finally {
+    if (link) await link.close();
+    $("send").disabled = false;
+  }
+};
+
+/* ---- Telegram webhook via the relay (it allows CORS for this call) ---- */
+$("hook").onclick = async () => {
+  const out = $("hooklog");
+  const relay = $("relay").value.trim().replace(/\/+$/, "");
+  const key = $("key").value.trim();
+  if (!/^https:\/\//.test(relay) || !key) { out.textContent = "Enter the relay URL and device key in step 2 first."; return; }
+  out.textContent = "Registering...";
+  try {
+    const r = await fetch(relay + "/admin/setup", { method: "POST", headers: { Authorization: "Bearer " + key } });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    chip("stBot", j.bot ? "Bot: @" + j.bot : "Bot: ok", "ok");
+    out.textContent = j.paired
+      ? "Webhook registered. Your bot is already paired."
+      : "Webhook registered.\nNow open @" + (j.bot || "your bot") + " in Telegram and send:\n\n/start " + j.pairing_code;
+  } catch (e) {
+    chip("stBot", "Bot: failed", "bad");
+    out.textContent = "Could not register: " + (e.message || e) + "\nCheck the relay URL, device key and that TELEGRAM_BOT_TOKEN is set on the Worker.";
+  }
+};
+</script>
+</body>
+</html>

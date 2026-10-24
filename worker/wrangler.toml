@@ -1,0 +1,28 @@
+# Maximus OS cloud relay - Telegram bot, AI assistant, prices and signals.
+#
+# Deploy (details in docs/CLOUDFLARE.md):
+#   cd worker && npm install
+#   npx wrangler secret put TELEGRAM_BOT_TOKEN
+#   npx wrangler secret put DEVICE_KEY            # any long random string
+#   npx wrangler deploy
+#   curl -X POST https://<your-worker>/admin/setup -H "Authorization: Bearer <DEVICE_KEY>"
+name = "maximus-os"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[observability]
+enabled = true
+
+[ai]
+binding = "AI"
+
+# No id: Wrangler 4 creates and binds this namespace automatically on deploy.
+[[kv_namespaces]]
+binding = "MAXIMUS"
+
+[vars]
+# Workers AI model used for chat when no external provider is configured.
+AI_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+# Optional: any OpenAI-compatible endpoint (set AI_API_KEY as a secret).
+# AI_BASE_URL = "https://openrouter.ai/api/v1"
+# AI_MODEL = "openai/gpt-4o-mini"
