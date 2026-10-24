@@ -72,6 +72,46 @@ static void note(mx_model_t *m, mx_note_kind_t k, const char *t, const char *b, 
 
 void mx_activity(void) {}
 
+/* a scripted finger, so taps, swipes and typing go through LVGL's real input path */
+static lv_point_t f_pt;
+static bool f_down;
+
+static void touch_read(lv_indev_drv_t *d, lv_indev_data_t *data)
+{
+    (void)d;
+    data->point = f_pt;
+    data->state = f_down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+static void press(int x, int y) { f_pt.x = x; f_pt.y = y; f_down = true; settle(60); }
+static void release(void) { f_down = false; settle(120); }
+static void tap(int x, int y) { press(x, y); release(); settle(250); }
+
+static void swipe(int x0, int y0, int x1, int y1)
+{
+    press(x0, y0);
+    for (int i = 1; i <= 10; i++) {
+        f_pt.x = x0 + (x1 - x0) * i / 10;
+        f_pt.y = y0 + (y1 - y0) * i / 10;
+        settle(20);
+    }
+    release();
+    settle(400);
+}
+
+/* centre of a key of the text keyboard (y0 = 110, keys 50 high, 56 apart) */
+static void key(int row, int idx)
+{
+    static const int x0[4] = { 27, 46, 30, 57 };
+    static const int unit[4][10] = {
+        { 32, 32, 32, 32, 32, 32, 32, 32, 32, 32 }, { 32, 32, 32, 32, 32, 32, 32, 32, 32 },
+        { 48, 32, 32, 32, 32, 32, 32, 32, 48 }, { 70, 141, 70 } };
+    int x = x0[row];
+    int gap = row == 3 ? 8 : 4;
+    for (int i = 0; i < idx; i++) x += unit[row][i] + gap;
+    tap(x + unit[row][idx] / 2, 110 + row * 56 + 25);
+}
+
 /* a stand-in for a camera frame: sky, hills and a sun, so scaling is visible */
 static lv_color_t cam_buf[416 * 416], gal_buf[412 * 309];
 
@@ -98,6 +138,11 @@ int main(int argc, char **argv)
     lv_disp_drv_init(&dd);
     dd.hor_res = W; dd.ver_res = H; dd.flush_cb = flush; dd.draw_buf = &db;
     lv_disp_drv_register(&dd);
+    static lv_indev_drv_t id;
+    lv_indev_drv_init(&id);
+    id.type = LV_INDEV_TYPE_POINTER;
+    id.read_cb = touch_read;
+    lv_indev_drv_register(&id);
 
     static mx_model_t m;
     memset(&m, 0, sizeof m);
@@ -145,6 +190,7 @@ int main(int argc, char **argv)
 
 #define SHOT(name) do { ui_refresh(); settle(450); dump(dir, name); } while (0)
 
+    m.pin_set = false; m.locked = false;
     ui_ring_color(0x2F7BFF);
     SHOT("01_home");
     ui_ring_color(0);
@@ -180,27 +226,56 @@ int main(int argc, char **argv)
     ui_goto(MX_PAGE_NOTES, false); SHOT("19_notes");
 
     ui_goto(MX_PAGE_SETTINGS, false); SHOT("20_settings");
-    ui_input(MX_IN_CONFIRM); for (int i = 0; i < 5; i++) ui_input(MX_IN_RIGHT); SHOT("21_settings_scrolled");
+    swipe(206, 320, 206, 140); SHOT("21_settings_scrolled");
     ui_goto(MX_PAGE_WIFI, false); SHOT("22_wifi");
     m.wifi_state = MX_WIFI_OFF; SHOT("23_wifi_off"); m.wifi_state = MX_WIFI_CONNECTED;
-    ui_goto(MX_PAGE_WIFIPASS, false); SHOT("24_wifi_password");
-    for (int i = 0; i < 7; i++) ui_input(MX_IN_RIGHT); SHOT("25_wifi_password_knob");
-    ui_goto(MX_PAGE_DISPLAY, false); SHOT("26_display");
-    ui_input(MX_IN_CONFIRM); ui_input(MX_IN_LEFT); ui_input(MX_IN_LEFT); SHOT("27_display_adjust");
-    ui_goto(MX_PAGE_TIME, false); SHOT("28_time");
-    ui_goto(MX_PAGE_TIMESET, false); ui_input(MX_IN_RIGHT); ui_input(MX_IN_CONFIRM); ui_input(MX_IN_CONFIRM); ui_input(MX_IN_CONFIRM); SHOT("29_time_set");
-    ui_goto(MX_PAGE_CHIP, false); SHOT("30_chip");
-    m.chip_state = MX_CHIP_FLASHING; m.chip_pct = 63; SHOT("31_chip_flashing");
-    m.chip_state = MX_CHIP_MISSING; SHOT("32_chip_missing"); m.chip_state = MX_CHIP_OK;
-    ui_goto(MX_PAGE_SECURITY, false); SHOT("33_security");
-    ui_goto(MX_PAGE_HOME, false);
-    ui_show_alert("BTC/USDT", "Stop Loss Triggered", "$61,230.00", true); settle(300); dump(dir, "34_alert");
+    /* tap "Home WiFi": the second network row */
+    ui_goto(MX_PAGE_WIFI, false); settle(300); tap(206, 88 + 4 + 3 * 66 + 29); SHOT("24_wifi_password");
+    key(2, 0); key(0, 9); key(1, 0); key(1, 1); key(1, 1); key(3, 0); key(0, 0); key(0, 1);
+    SHOT("25_wifi_password_typed");
+    press(27 + 36 + 16, 135); settle(200); dump(dir, "26_wifi_key_held"); release();
+    key(3, 0); SHOT("27_wifi_letters");
+    ui_goto(MX_PAGE_DISPLAY, false); SHOT("28_display");
+    swipe(206, 330, 206, 120); SHOT("29_display_scrolled");
+    ui_goto(MX_PAGE_DTEST, false); SHOT("30_dtest_white");
+    for (int i = 0; i < 8; i++) tap(206, 150);
+    SHOT("31_dtest_bars");
+    tap(206, 150); settle(2800); SHOT("32_dtest_checker");
+    swipe(80, 200, 330, 200); SHOT("33_dtest_back_to_display");
+    ui_goto(MX_PAGE_TIME, false); SHOT("34_time");
+    tap(206, 88 + 4 + 66 + 29); SHOT("35_time_zone");
+    ui_goto(MX_PAGE_TIMESET, false); ui_input(MX_IN_RIGHT); ui_input(MX_IN_CONFIRM); ui_input(MX_IN_CONFIRM); ui_input(MX_IN_CONFIRM); SHOT("36_time_set");
+    ui_goto(MX_PAGE_CHIP, false); SHOT("37_chip");
+    m.chip_state = MX_CHIP_FLASHING; m.chip_pct = 63; SHOT("38_chip_flashing");
+    m.chip_state = MX_CHIP_MISSING; SHOT("39_chip_missing"); m.chip_state = MX_CHIP_OK;
+    ui_goto(MX_PAGE_SECURITY, false); SHOT("40_security");
+    tap(206 - 88, 94 + 27); tap(206, 94 + 27); SHOT("41_security_two_digits");
+    m.locked = false;
+
+    /* Settings > Restart asks first */
+    ui_goto(MX_PAGE_SETTINGS, false);
+    ui_input(MX_IN_CONFIRM); for (int i = 0; i < 9; i++) ui_input(MX_IN_RIGHT); SHOT("42_settings_knob_on_restart");
+    ui_input(MX_IN_CONFIRM); SHOT("43_restart_confirm");
+    ui_input(MX_IN_CONFIRM);        /* the highlight starts on Cancel */
+
+    /* swipes from Home */
+    ui_goto(MX_PAGE_HOME, false); settle(300);
+    swipe(206, 340, 206, 120); SHOT("44_app_grid");
+    tap(206 + 98, 58 + 204 + 35); SHOT("45_grid_opened_settings");
+    ui_goto(MX_PAGE_HOME, false); settle(300);
+    swipe(206, 60, 206, 300); SHOT("46_quick_panel");
+    swipe(206, 340, 206, 100); settle(200);
+    swipe(340, 200, 80, 200); SHOT("47_swiped_to_camera");
+    swipe(80, 200, 340, 200); SHOT("48_swiped_back_home");
+
+    ui_show_alert("BTC/USDT", "Stop Loss Triggered", "$61,230.00", true); settle(300); dump(dir, "49_alert");
     ui_input(MX_IN_CONFIRM);
-    ui_set_hold(1400); settle(300); dump(dir, "35_hold_click");
-    ui_set_hold(3200); settle(300); dump(dir, "36_hold_home");
-    ui_set_hold(5000); settle(300); dump(dir, "37_hold_off");
+    ui_set_hold(1400); settle(300); dump(dir, "50_hold_click");
+    ui_set_hold(3200); settle(300); dump(dir, "51_hold_home");
+    ui_set_hold(5000); settle(300); dump(dir, "52_hold_off");
     ui_set_hold(0);
-    m.battery = 18; m.charging = false; ui_refresh(); settle(300); dump(dir, "38_home_low_battery");
+    m.battery = 18; m.charging = false; ui_refresh(); settle(300); dump(dir, "53_home_low_battery");
+    printf("final page %d (expect %d)\n", ui_page(), MX_PAGE_HOME);
     puts("ok");
     return 0;
 }

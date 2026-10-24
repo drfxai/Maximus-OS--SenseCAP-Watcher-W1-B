@@ -8,6 +8,7 @@
 #include "mbedtls/sha256.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "driver/uart.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -61,6 +62,7 @@ void mx_cfg_load(void)
     if (nvs_get_u8(h, "cam_video", &b) == ESP_OK) C.cam_video = b;
     nvs_get_u8(h, "timeout", &C.timeout_idx);
     nvs_get_u8(h, "disp_speed", &C.disp_speed);
+    nvs_get_u8(h, "bl_freq", &C.bl_freq);
     n = sizeof C.pin_hash;
     if (nvs_get_blob(h, "pin", C.pin_hash, &n) == ESP_OK && n == sizeof C.pin_hash) C.pin_set = true;
     nvs_close(h);
@@ -69,6 +71,7 @@ void mx_cfg_load(void)
     if (C.volume > 100) C.volume = 100;
     if (C.timeout_idx > 2) C.timeout_idx = 1;
     if (C.disp_speed > 1) C.disp_speed = 0;
+    if (C.bl_freq > 2) C.bl_freq = 0;
 }
 
 void mx_cfg_save(void)
@@ -92,6 +95,7 @@ void mx_cfg_save(void)
     nvs_set_u8(h, "cam_video", C.cam_video);
     nvs_set_u8(h, "timeout", C.timeout_idx);
     nvs_set_u8(h, "disp_speed", C.disp_speed);
+    nvs_set_u8(h, "bl_freq", C.bl_freq);
     if (C.pin_set) nvs_set_blob(h, "pin", C.pin_hash, sizeof C.pin_hash);
     else nvs_erase_key(h, "pin");
     nvs_commit(h);
@@ -212,24 +216,41 @@ static void handle_line(char *line)
     }
 }
 
+/* one line buffer per port, so bytes from the two never mix */
+typedef struct {
+    char buf[1024];
+    size_t n;
+} line_t;
+
+static void feed(line_t *l, const uint8_t *p, int len)
+{
+    for (int i = 0; i < len; i++) {
+        uint8_t ch = p[i];
+        if (ch == '\n' || ch == '\r') {
+            if (l->n) {
+                l->buf[l->n] = 0;
+                handle_line(l->buf);
+            }
+            l->n = 0;
+        } else if (l->n < sizeof l->buf - 1) {
+            l->buf[l->n++] = (char)ch;
+        } else {
+            l->n = 0; /* overlong line: drop it */
+        }
+    }
+}
+
+/* Reads UART0 (the USB-C socket, through the CH342 bridge) and the native
+   USB port. Replies go out through printf, which reaches both. */
 static void console_task(void *arg)
 {
-    char buf[1024];
-    size_t n = 0;
+    static line_t uart_l, jtag_l;
+    uint8_t chunk[128];
     for (;;) {
-        uint8_t ch;
-        if (usb_serial_jtag_read_bytes(&ch, 1, pdMS_TO_TICKS(100)) != 1) continue;
-        if (ch == '\n' || ch == '\r') {
-            if (n) {
-                buf[n] = 0;
-                handle_line(buf);
-            }
-            n = 0;
-        } else if (n < sizeof buf - 1) {
-            buf[n++] = (char)ch;
-        } else {
-            n = 0; /* overlong line: drop it */
-        }
+        int n = uart_read_bytes(UART_NUM_0, chunk, sizeof chunk, pdMS_TO_TICKS(20));
+        if (n > 0) feed(&uart_l, chunk, n);
+        n = usb_serial_jtag_read_bytes(chunk, sizeof chunk, pdMS_TO_TICKS(20));
+        if (n > 0) feed(&jtag_l, chunk, n);
     }
 }
 

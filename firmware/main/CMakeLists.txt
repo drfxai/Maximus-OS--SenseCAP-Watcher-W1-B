@@ -20,6 +20,8 @@ idf_component_register(
         "ui/ui.c"
         "ui/ui_camera.c"
         "ui/ui_settings.c"
+        "ui/ui_shell.c"
+        "ui/ui_kb.c"
         "ui/assets.c"
     INCLUDE_DIRS "." "ui"
     PRIV_REQUIRES sensecap-watcher esp_lvgl_port lvgl sscma_client esp_jpeg_simd bt fatfs sdmmc nvs_flash esp_wifi esp_netif esp_event esp_http_client esp-tls mbedtls json

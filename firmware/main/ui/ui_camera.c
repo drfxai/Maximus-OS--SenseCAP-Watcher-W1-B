@@ -254,7 +254,7 @@ static void gallery_refresh(void)
         snprintf(b, sizeof b, "%d item%s", M->gal_count, M->gal_count == 1 ? "" : "s");
         ui_set_text(g_line1, b);
         ui_set_text(g_line2, M->gal_name);
-        ui_set_text(g_hint, "Click to open");
+        ui_set_text(g_hint, "Tap to open");
     }
     if (have && M->gal_pix) {
         lv_obj_clear_flag(g_img, LV_OBJ_FLAG_HIDDEN);
@@ -303,6 +303,7 @@ static void build_gallery(void)
     pg->refresh = gallery_refresh;
     pg->enter = gallery_enter;
     pg->confirm = gallery_confirm;
+    pg->tap = gallery_confirm;
 }
 
 /* ------------------------------------------------------------------ */
@@ -429,6 +430,14 @@ static void viewer_confirm(void)
     }
 }
 
+/* a tap on the picture opens the menu (or stops a video); a tap beside the
+   menu rows closes it */
+static void viewer_tap(void)
+{
+    if (v_menu) { menu_close(); return; }
+    viewer_confirm();
+}
+
 static bool viewer_gesture(lv_dir_t d)
 {
     if (v_menu) return true;
@@ -493,6 +502,7 @@ static void build_viewer(void)
     pg->leave = viewer_leave;
     pg->rotate = viewer_rotate;
     pg->confirm = viewer_confirm;
+    pg->tap = viewer_tap;
     pg->gesture = viewer_gesture;
     ui_register_hidden(MX_PAGE_VIEWER, MX_PAGE_GALLERY);
 }

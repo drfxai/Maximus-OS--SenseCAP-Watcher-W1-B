@@ -14,16 +14,17 @@ An AI companion firmware for the round-screen SenseCAP Watcher (ESP32-S3): voice
 
 The relay (Telegram bot + AI) is a free Cloudflare Worker, set up in about five minutes: see [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md).
 
-## Knob
+## Touch and knob
 
-| Action | Result |
+| Gesture | Result |
 |---|---|
-| Turn | Navigate pages; move the highlight inside lists |
-| Tap (release before 5 s) | Confirm / act (start or stop listening, open a list, pick an item) |
-| Hold 5 s, release | Back to Home |
-| Hold 10 s | Power off (a progress ring shows both thresholds) |
-
-Touch also works: tap = confirm, swipe left/right = next/previous page, tap a list row to pick it.
+| Swipe right-to-left / left-to-right | Next / previous page (on a sub-page: Back) |
+| Swipe top-to-bottom | Quick panel: Wi-Fi, Bluetooth, silent, brightness and volume sliders |
+| Swipe bottom-to-top | App grid |
+| Drag a list, tap a row | Scroll, open |
+| Knob turn | Next / previous page, or move the highlight in a list or keyboard |
+| Knob click | Select |
+| Knob hold 2 s / 5 s | Home / power off |
 
 ## What's in it
 
@@ -77,5 +78,13 @@ Built on Seeed Studio's [SenseCAP Watcher firmware SDK](https://github.com/Seeed
 - **Knob**: click selects, hold 2 s goes Home, hold 5 s powers off.
 - **Battery icon** with a charging bolt.
 - **Two-stage installer** (web page): identify the device, erase and install the ESP32-S3 firmware, then install the camera chip (Himax WE2) firmware.
+
+## v2.1
+
+- **Camera chip install fixed**: the Watcher's USB-C goes through a CH342 bridge to the ESP32's UART0, but v2 only listened on the chip's native USB port, so the installer never got an answer. The console now listens on both, and the installer tries both CH342 ports.
+- **Settings no longer restarts the watch**: in v2 a vertical swipe moved a hidden highlight and the next tap anywhere ran it, which could land on Restart. Taps now act only on what is under the finger, and Restart / Power off ask first.
+- **Battery and charging**: read from the charger's pins every second (the board package reads the charge pin inverted) and smoothed.
+- **New touch UI**: swipe gestures in all four directions, app grid, quick panel, scrolling lists, a phone-style keyboard (nearest-key hit testing, key preview, hold-to-repeat backspace) and a PIN pad.
+- **Display**: test patterns (Settings > Display > Test patterns) and a backlight frequency option (5 / 20 / 40 kHz). Bands that show up only in phone photos of the screen usually come from the backlight PWM; a higher frequency should remove them.
 
 The camera chip firmware is Seeed's stock SSCMA image (Apache-2.0, from Seeed-Studio/SenseCAP-Watcher-Firmware), fetched by `tools/fetch-deps.sh` and bundled; Maximus OS does not ship its own Himax firmware. Features are untested on real hardware at the time of writing.

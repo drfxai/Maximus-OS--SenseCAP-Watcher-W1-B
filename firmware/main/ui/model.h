@@ -102,7 +102,8 @@ typedef struct {
     struct tm now;            /* local time */
     bool time_valid;
     int battery;              /* 0-100 */
-    bool charging;
+    bool charging;            /* USB power present */
+    bool charged;             /* charger reports the battery full */
     bool wifi;
     bool relay_ok;            /* worker reachable */
     bool telegram_paired;
@@ -147,6 +148,7 @@ typedef struct {
     int volume;               /* 0-100 */
     int timeout_idx;          /* 0 = 30 s, 1 = 1 min, 2 = 2 min */
     int disp_speed;           /* 0 = normal, 1 = turbo (applies after a restart) */
+    int bl_freq;              /* backlight PWM: 0 = 5 kHz, 1 = 20 kHz, 2 = 40 kHz */
     bool auto_time;
     int tz_idx;               /* index into mx_tz, -1 = custom rule from the setup page */
 
@@ -191,7 +193,8 @@ typedef struct {
     void (*assistant_toggle)(void);          /* start / stop listening */
     void (*journal_toggle)(void);            /* start / stop a voice note */
     void (*set_mode)(int idx);
-    void (*set_brightness)(int pct);
+    void (*set_brightness)(int pct);         /* apply and save */
+    void (*preview_brightness)(int pct);     /* apply only, while a slider moves */
     void (*set_volume)(int pct);
     void (*snapshot)(void);                  /* camera -> Telegram */
     void (*wifi_set_enabled)(bool on);
@@ -201,6 +204,7 @@ typedef struct {
     void (*bt_set_enabled)(bool on);
     void (*set_timeout)(int idx);
     void (*set_disp_speed)(int idx);
+    void (*set_bl_freq)(int idx);
     void (*set_time)(const struct tm *local);    /* hand-set date and time */
     void (*set_tz)(int idx);
     void (*set_auto_time)(bool on);

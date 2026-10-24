@@ -20,6 +20,7 @@ typedef struct {
     bool auto_time;     /* follow NTP; off keeps the time set by hand */
     uint8_t timeout_idx;/* screen timeout: 0 = 30 s, 1 = 1 min, 2 = 2 min */
     uint8_t disp_speed; /* 0 = normal (40 MHz pixel clock), 1 = turbo (80 MHz) */
+    uint8_t bl_freq;    /* backlight PWM: 0 = 5 kHz (factory), 1 = 20 kHz, 2 = 40 kHz */
     bool cam_video;     /* camera opens in video mode */
     bool pin_set;
     uint8_t pin_hash[32];

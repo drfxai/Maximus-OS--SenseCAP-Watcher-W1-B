@@ -1,7 +1,8 @@
 /*
  * Settings and its sub-pages: Wi-Fi (networks and password), display,
- * date and time, camera chip. Sub-pages are off the carousel; every one ends
- * in a Back row (or a swipe to the right) that returns to its parent.
+ * date and time, camera chip. Sub-pages are off the carousel; a swipe from
+ * left to right (or the Back row) returns to the parent. Anything that cannot
+ * be undone (Restart, Power off, chip reinstall) asks first.
  */
 #include "ui_priv.h"
 
@@ -37,12 +38,6 @@ const mx_tz_info_t mx_tz[] = {
 };
 const int mx_tz_n = sizeof mx_tz / sizeof mx_tz[0];
 const int mx_timeout_s[3] = { 30, 60, 120 };
-
-static const char *timeout_name(int i)
-{
-    static const char *n[3] = { "30 seconds", "1 minute", "2 minutes" };
-    return n[i < 0 || i > 2 ? 1 : i];
-}
 
 /* every hidden list page rotates its own list */
 static bool list_page_rotate(int dir)
@@ -111,6 +106,7 @@ static void settings_refresh(void)
         ui_list_set(&L_set, S_TG, NULL, b, "");
     }
     ui_list_set(&L_set, S_SEC, NULL, M->pin_set ? "Lock the watch now" : "Create a 4-digit PIN", "");
+    L_set.skip[S_BACK] = !P[MX_PAGE_SETTINGS].capture;     /* only while the knob drives the list */
 }
 
 static bool settings_rotate(int dir)
@@ -118,6 +114,9 @@ static bool settings_rotate(int dir)
     if (!P[MX_PAGE_SETTINGS].capture) return false;
     return ui_list_rotate(&L_set, dir);
 }
+
+static void do_reboot(void) { if (A->reboot) A->reboot(); }
+static void do_power_off(void) { if (A->power_off) A->power_off(); }
 
 static int step_pct(int cur_v, const int *steps, int n)
 {
@@ -151,10 +150,10 @@ static void settings_confirm(void)
         ui_goto(MX_PAGE_SECURITY, true);
         return;
     case S_REBOOT:
-        if (A->reboot) A->reboot();
+        ui_confirm("Restart?", "The watch restarts and comes back on its own.", "Restart", C_ORANGE, do_reboot);
         break;
     case S_OFF:
-        if (A->power_off) A->power_off();
+        ui_confirm("Power off?", "Hold the knob or plug in USB to switch it back on.", "Power off", C_RED, do_power_off);
         break;
     case S_BACK:
         pg->capture = false;
@@ -238,8 +237,7 @@ static void wifi_refresh(void)
 
 static void wifi_enter(void)
 {
-    L_wifi.sel = 0;
-    L_wifi.first = 0;
+    ui_list_reset(&L_wifi);
     if (M->wifi_state != MX_WIFI_OFF && A->wifi_scan) A->wifi_scan();
 }
 
@@ -288,10 +286,11 @@ static void build_wifi(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* WI-FI PASSWORD (on-screen keyboard; the knob walks the keys)         */
+/* WI-FI PASSWORD (phone-style keyboard; the knob can walk the keys too)  */
 /* ------------------------------------------------------------------ */
 
-static lv_obj_t *wp_ta, *wp_kb, *wp_name, *wp_eye;
+static lv_obj_t *wp_ta, *wp_name, *wp_eye;
+static ui_kb_t *wp_kb;
 static bool wp_hidden;
 
 static void wp_join(void)
@@ -300,11 +299,11 @@ static void wp_join(void)
     ui_goto(MX_PAGE_WIFI, true);
 }
 
-static void wp_kb_event(lv_event_t *e)
+static void wp_key(int kind, const char *txt)
 {
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code == LV_EVENT_READY) wp_join();
-    else if (code == LV_EVENT_CANCEL) ui_back();
+    if (kind == UI_KEY_CHAR) lv_textarea_add_text(wp_ta, txt);
+    else if (kind == UI_KEY_BKSP) lv_textarea_del_char(wp_ta);
+    else if (kind == UI_KEY_OK) wp_join();
 }
 
 static void wp_eye_cb(lv_event_t *e)
@@ -316,35 +315,21 @@ static void wp_eye_cb(lv_event_t *e)
     lv_label_set_text(lv_obj_get_child(wp_eye, 0), wp_hidden ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
 }
 
-static void wp_select(int id)
+static void wp_back_cb(lv_event_t *e)
 {
-    uint16_t n = ((lv_btnmatrix_t *)wp_kb)->btn_cnt;
-    if (!n) return;
-    if (id < 0) id = n - 1;
-    if (id >= n) id = 0;
-    lv_btnmatrix_set_selected_btn(wp_kb, (uint16_t)id);
+    (void)e;
+    if (!ui_is_tap()) return;
+    ui_back();
 }
 
-static bool wp_rotate(int dir)
-{
-    int sel = lv_btnmatrix_get_selected_btn(wp_kb);
-    if (sel == LV_BTNMATRIX_BTN_NONE) sel = dir > 0 ? -1 : 0;
-    wp_select(sel + dir);
-    return true;
-}
-
-static void wp_confirm(void)
-{
-    if (lv_btnmatrix_get_selected_btn(wp_kb) == LV_BTNMATRIX_BTN_NONE) wp_select(0);
-    lv_event_send(wp_kb, LV_EVENT_VALUE_CHANGED, NULL);
-}
+static bool wp_rotate(int dir) { return ui_kb_rotate(wp_kb, dir); }
+static void wp_confirm(void) { ui_kb_confirm(wp_kb); }
 
 static void wp_enter(void)
 {
     lv_textarea_set_text(wp_ta, "");
-    lv_keyboard_set_mode(wp_kb, LV_KEYBOARD_MODE_TEXT_LOWER);
     lv_label_set_text(wp_name, wp_ssid);
-    wp_select(0);
+    ui_kb_reset(wp_kb);
 }
 
 static void wp_leave(void)
@@ -352,122 +337,171 @@ static void wp_leave(void)
     lv_textarea_set_text(wp_ta, "");          /* do not leave the password behind */
 }
 
-static void wp_refresh(void) {}
-
 static void build_wifipass(void)
 {
     page_t *pg = &P[MX_PAGE_WIFIPASS];
     pg->scr = ui_scr();
     ui_chrome(pg, false);
-    ui_lbl(pg->scr, &lv_font_montserrat_14, C_DIM, "Password for", LV_ALIGN_TOP_MID, 0, 44);
-    wp_name = ui_lbl(pg->scr, &lv_font_montserrat_16, C_TEXT, "", LV_ALIGN_TOP_MID, 0, 62);
-    lv_obj_set_width(wp_name, 220);
+    lv_obj_align(pg->batt.cont, LV_ALIGN_TOP_MID, -20, 8);
+    lv_obj_align_to(pg->batt.pct, pg->batt.cont, LV_ALIGN_OUT_RIGHT_MID, 4, 0);
+    wp_name = ui_lbl(pg->scr, &lv_font_montserrat_14, C_DIM, "", LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_set_width(wp_name, 240);
     lv_label_set_long_mode(wp_name, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_align(wp_name, LV_TEXT_ALIGN_CENTER, 0);
 
+    /* [<]  [ password field ]  [eye] */
+    lv_obj_t *back = ui_button(pg->scr, 42, 42, C_PANEL_HI, LV_SYMBOL_LEFT, wp_back_cb, NULL);
+    lv_obj_align(back, LV_ALIGN_TOP_MID, -128, 56);
     wp_ta = lv_textarea_create(pg->scr);
-    lv_obj_set_size(wp_ta, 214, 36);
-    lv_obj_align(wp_ta, LV_ALIGN_TOP_MID, -20, 86);
+    lv_obj_set_size(wp_ta, 200, 44);
+    lv_obj_align(wp_ta, LV_ALIGN_TOP_MID, 0, 55);
     lv_textarea_set_one_line(wp_ta, true);
     lv_textarea_set_max_length(wp_ta, 63);
-    lv_textarea_set_placeholder_text(wp_ta, "type the password");
+    lv_textarea_set_placeholder_text(wp_ta, "Password");
+    lv_textarea_set_password_show_time(wp_ta, 900);
+    lv_obj_clear_flag(wp_ta, LV_OBJ_FLAG_CLICKABLE);     /* the keyboard below types into it */
+    lv_obj_add_state(wp_ta, LV_STATE_FOCUSED);            /* keeps the cursor blinking */
     lv_obj_set_style_text_font(wp_ta, &lv_font_montserrat_16, 0);
     lv_obj_set_style_bg_color(wp_ta, C_PANEL, 0);
-    ui_text_color(wp_ta, C_TEXT);
+    lv_obj_set_style_text_color(wp_ta, C_TEXT, 0);
     lv_obj_set_style_border_color(wp_ta, C_BLUE, 0);
     lv_obj_set_style_border_width(wp_ta, 2, 0);
-    lv_obj_set_style_radius(wp_ta, 12, 0);
+    lv_obj_set_style_radius(wp_ta, 22, 0);
+    lv_obj_set_style_pad_hor(wp_ta, 14, 0);
+    lv_obj_set_style_pad_ver(wp_ta, 11, 0);
+    lv_obj_set_style_border_color(wp_ta, C_BLUE, LV_STATE_FOCUSED);
+    lv_obj_set_style_bg_color(wp_ta, C_BLUE, LV_PART_CURSOR | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(wp_ta, C_BLUE, LV_PART_CURSOR | LV_STATE_FOCUSED);
+    lv_obj_set_style_text_color(wp_ta, C_DIM, LV_PART_TEXTAREA_PLACEHOLDER);
 
-    wp_eye = ui_box(pg->scr, 36, 36, C_PANEL, 12);
-    lv_obj_align(wp_eye, LV_ALIGN_TOP_MID, 112, 86);
-    lv_obj_add_flag(wp_eye, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(wp_eye, ui_press_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(wp_eye, wp_eye_cb, LV_EVENT_CLICKED, NULL);
-    ui_lbl(wp_eye, &lv_font_montserrat_16, C_TEXT, LV_SYMBOL_EYE_OPEN, LV_ALIGN_CENTER, 0, 0);
+    wp_eye = ui_button(pg->scr, 42, 42, C_PANEL_HI, LV_SYMBOL_EYE_OPEN, wp_eye_cb, NULL);
+    lv_obj_align(wp_eye, LV_ALIGN_TOP_MID, 128, 56);
 
-    wp_kb = lv_keyboard_create(pg->scr);
-    lv_obj_set_size(wp_kb, 304, 204);
-    lv_obj_align(wp_kb, LV_ALIGN_TOP_MID, 0, 132);
-    lv_keyboard_set_textarea(wp_kb, wp_ta);
-    lv_obj_set_style_bg_opa(wp_kb, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(wp_kb, 0, 0);
-    lv_obj_set_style_pad_all(wp_kb, 0, 0);
-    lv_obj_set_style_pad_gap(wp_kb, 4, 0);
-    lv_obj_set_style_bg_color(wp_kb, C_PANEL, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(wp_kb, C_TEXT, LV_PART_ITEMS);
-    lv_obj_set_style_border_width(wp_kb, 0, LV_PART_ITEMS);
-    lv_obj_set_style_radius(wp_kb, 8, LV_PART_ITEMS);
-    /* the key the knob is on */
-    lv_obj_set_style_bg_color(wp_kb, C_BLUE, LV_PART_ITEMS | LV_STATE_FOCUSED);
-    lv_obj_add_state(wp_kb, LV_STATE_FOCUSED);
-    lv_obj_add_event_cb(wp_kb, wp_kb_event, LV_EVENT_READY, NULL);
-    lv_obj_add_event_cb(wp_kb, wp_kb_event, LV_EVENT_CANCEL, NULL);
+    wp_kb = ui_kb_create(pg->scr, UI_KB_TEXT, 110, wp_key);
 
-    pg->refresh = wp_refresh;
     pg->enter = wp_enter;
     pg->leave = wp_leave;
     pg->rotate = wp_rotate;
     pg->confirm = wp_confirm;
+    pg->no_swipe = true;
     ui_register_hidden(MX_PAGE_WIFIPASS, MX_PAGE_WIFI);
 }
 
 /* ------------------------------------------------------------------ */
-/* DISPLAY                                                             */
+/* DISPLAY (a form: slider and option buttons; the knob steps through)  */
 /* ------------------------------------------------------------------ */
 
-enum { D_BRIGHT, D_TIMEOUT, D_SPEED, D_BACK, D_N };
-static ui_list_t L_dsp;
-static bool dsp_adjust;
+enum { D_BRIGHT, D_TIMEOUT, D_BLFREQ, D_SPEED, D_TEST, D_BACK, D_N };
+enum { G_TIMEOUT, G_BLFREQ, G_SPEED, G_N };
+static const char *const seg_names[G_N][3] = {
+    { "30 s", "1 min", "2 min" },
+    { "5 kHz", "20 kHz", "40 kHz" },
+    { "Normal", "Turbo", NULL },
+};
+static lv_obj_t *d_form, *d_item[D_N], *d_slider, *d_bri_v, *d_seg[G_N][3], *d_hint[G_N];
+static int d_sel;
+static bool d_adjust;          /* knob turns the brightness */
+
+static int seg_value(int g)
+{
+    return g == G_TIMEOUT ? M->timeout_idx : g == G_BLFREQ ? M->bl_freq : M->disp_speed;
+}
+
+static void seg_set(int g, int v)
+{
+    if (g == G_TIMEOUT) { M->timeout_idx = v; if (A->set_timeout) A->set_timeout(v); }
+    else if (g == G_BLFREQ) { M->bl_freq = v; if (A->set_bl_freq) A->set_bl_freq(v); }
+    else { M->disp_speed = v; if (A->set_disp_speed) A->set_disp_speed(v); }
+}
+
+static void seg_cb(lv_event_t *e)
+{
+    int c = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!ui_is_tap()) return;
+    mx_activity();
+    seg_set(c >> 4, c & 15);
+    ui_refresh();
+}
+
+static void bri_cb(lv_event_t *e)
+{
+    int v = lv_slider_get_value(d_slider);
+    mx_activity();
+    if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+        if (A->preview_brightness) A->preview_brightness(v);
+    } else {
+        M->brightness = v;
+        if (A->set_brightness) A->set_brightness(v);
+    }
+    lv_label_set_text_fmt(d_bri_v, "%d%%", v);
+}
+
+static void d_btn_cb(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (!ui_is_tap()) return;
+    mx_activity();
+    if (i == D_TEST) ui_goto(MX_PAGE_DTEST, true);
+    else ui_back();
+}
+
+static lv_obj_t *form_item(int h)
+{
+    lv_obj_t *o = ui_box(d_form, ROW_W, h, C_PANEL, 20);
+    lv_obj_set_style_border_color(o, C_BLUE, 0);
+    return o;
+}
 
 static void display_refresh(void)
 {
-    char b[24];
-    if (dsp_adjust) snprintf(b, sizeof b, LV_SYMBOL_LEFT " %d%% " LV_SYMBOL_RIGHT, M->brightness);
-    else snprintf(b, sizeof b, "%d%%", M->brightness);
-    ui_list_set(&L_dsp, D_BRIGHT, NULL, dsp_adjust ? "Turn the knob, click to set" : "Click to adjust", b);
-    ui_text_color(L_dsp.val[D_BRIGHT], dsp_adjust ? C_BLUE : C_DIM);
-    ui_list_set(&L_dsp, D_TIMEOUT, NULL, "Screen turns off after", timeout_name(M->timeout_idx));
-    ui_list_set(&L_dsp, D_SPEED, NULL, M->disp_speed ? "80 MHz pixel clock (restart)" : "40 MHz pixel clock", M->disp_speed ? "Turbo" : "Normal");
-    ui_list_layout(&L_dsp);
+    if (!lv_obj_has_state(d_slider, LV_STATE_PRESSED) && lv_slider_get_value(d_slider) != M->brightness) {
+        lv_slider_set_value(d_slider, M->brightness, LV_ANIM_OFF);
+        lv_label_set_text_fmt(d_bri_v, "%d%%", M->brightness);
+    }
+    ui_text_color(d_bri_v, d_adjust ? C_BLUE : C_TEXT);
+    for (int g = 0; g < G_N; g++)
+        for (int k = 0; k < 3 && d_seg[g][k]; k++) {
+            bool on = seg_value(g) == k;
+            ui_bg_color(d_seg[g][k], on ? C_BLUE : C_PANEL_HI);
+        }
+    ui_set_text(d_hint[G_SPEED], M->disp_speed ? "80 MHz pixel clock, applies after a restart" : "40 MHz pixel clock (factory)");
+    bool hl = ui_knob_mode();
+    for (int i = 0; i < D_N; i++) lv_obj_set_style_border_width(d_item[i], hl && i == d_sel ? 2 : 0, 0);
 }
 
 static bool display_rotate(int dir)
 {
-    if (dsp_adjust) {
-        int v = M->brightness + dir * 10;
-        if (v < 10) v = 10;
-        if (v > 100) v = 100;
+    if (d_adjust) {
+        int v = M->brightness + dir * 5;
+        v = v < 10 ? 10 : v > 100 ? 100 : v;
         if (v != M->brightness) {
             M->brightness = v;
             if (A->set_brightness) A->set_brightness(v);
         }
         return true;
     }
-    return ui_list_rotate(&L_dsp, dir);
+    d_sel = (d_sel + dir + D_N) % D_N;
+    lv_obj_scroll_to_view(d_item[d_sel], LV_ANIM_ON);
+    return true;
 }
 
 static void display_confirm(void)
 {
-    switch (L_dsp.sel) {
-    case D_BRIGHT: dsp_adjust = !dsp_adjust; break;
-    case D_TIMEOUT:
-        M->timeout_idx = (M->timeout_idx + 1) % 3;
-        if (A->set_timeout) A->set_timeout(M->timeout_idx);
-        break;
-    case D_SPEED:
-        M->disp_speed = !M->disp_speed;
-        if (A->set_disp_speed) A->set_disp_speed(M->disp_speed);
-        break;
-    case D_BACK: dsp_adjust = false; ui_back(); return;
+    switch (d_sel) {
+    case D_BRIGHT: d_adjust = !d_adjust; break;
+    case D_TIMEOUT: seg_set(G_TIMEOUT, (M->timeout_idx + 1) % 3); break;
+    case D_BLFREQ: seg_set(G_BLFREQ, (M->bl_freq + 1) % 3); break;
+    case D_SPEED: seg_set(G_SPEED, !M->disp_speed); break;
+    case D_TEST: ui_goto(MX_PAGE_DTEST, true); return;
+    case D_BACK: ui_back(); return;
     }
-    display_refresh();
 }
 
 static void display_enter(void)
 {
-    dsp_adjust = false;
-    L_dsp.sel = 0;
-    L_dsp.first = 0;
+    d_adjust = false;
+    d_sel = 0;
+    lv_obj_scroll_to_y(d_form, 0, LV_ANIM_OFF);
 }
 
 static void build_display(void)
@@ -476,18 +510,154 @@ static void build_display(void)
     pg->scr = ui_scr();
     ui_chrome(pg, true);
     page_title(pg, "Display");
-    L_dsp.parent = pg->scr;
-    ui_list_of[MX_PAGE_DISPLAY] = &L_dsp;
-    ui_list_add(&L_dsp, lv_color_hex(0xF5B301), LV_SYMBOL_EYE_OPEN, "Brightness", "", ui_row_click);
-    ui_list_add(&L_dsp, lv_color_hex(0x7C4DFF), LV_SYMBOL_POWER, "Screen timeout", "", ui_row_click);
-    ui_list_add(&L_dsp, lv_color_hex(0xE040A0), LV_SYMBOL_CHARGE, "Display speed", "", ui_row_click);
-    ui_list_add(&L_dsp, C_GREY, LV_SYMBOL_LEFT, "Back", NULL, ui_row_click);
-    ui_list_layout(&L_dsp);
+
+    d_form = lv_obj_create(pg->scr);
+    lv_obj_remove_style_all(d_form);
+    lv_obj_set_size(d_form, ROW_W + 8, LIST_BOTTOM + 8 - LIST_TOP);
+    lv_obj_set_pos(d_form, (W - ROW_W - 8) / 2, LIST_TOP);
+    lv_obj_set_flex_flow(d_form, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(d_form, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(d_form, ROW_GAP, 0);
+    lv_obj_set_style_pad_ver(d_form, 4, 0);
+    lv_obj_set_scroll_dir(d_form, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(d_form, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(d_form, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *it = d_item[D_BRIGHT] = form_item(78);
+    ui_lbl(it, &lv_font_montserrat_16, C_TEXT, "Brightness", LV_ALIGN_TOP_LEFT, 18, 12);
+    d_bri_v = ui_lbl(it, &lv_font_montserrat_16, C_TEXT, "", LV_ALIGN_TOP_RIGHT, -18, 12);
+    d_slider = lv_slider_create(it);
+    lv_obj_set_size(d_slider, ROW_W - 48, 12);
+    lv_obj_align(d_slider, LV_ALIGN_TOP_MID, 0, 50);
+    lv_slider_set_range(d_slider, 10, 100);
+    lv_obj_set_ext_click_area(d_slider, 16);
+    lv_obj_set_style_bg_color(d_slider, C_PANEL_HI, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(d_slider, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(d_slider, C_BLUE, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(d_slider, C_TEXT, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(d_slider, 6, LV_PART_KNOB);
+    lv_obj_add_event_cb(d_slider, bri_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(d_slider, bri_cb, LV_EVENT_RELEASED, NULL);
+
+    static const char *titles[G_N] = { "Screen off after", "Backlight frequency", "Panel speed" };
+    static const char *hints[G_N] = { "", "Higher = no bands in phone photos", "" };
+    for (int g = 0; g < G_N; g++) {
+        bool hint = g != G_TIMEOUT;
+        it = d_item[D_TIMEOUT + g] = form_item(hint ? 100 : 84);
+        ui_lbl(it, &lv_font_montserrat_16, C_TEXT, titles[g], LV_ALIGN_TOP_LEFT, 18, 10);
+        int n = seg_names[g][2] ? 3 : 2;
+        int bw = n == 3 ? 82 : 124, gap = 8, x0 = (ROW_W - (n * bw + (n - 1) * gap)) / 2;
+        for (int k = 0; k < n; k++) {
+            lv_obj_t *b = ui_button(it, bw, 36, C_PANEL_HI, seg_names[g][k], seg_cb, (void *)(intptr_t)(g << 4 | k));
+            lv_obj_align(b, LV_ALIGN_TOP_LEFT, x0 + k * (bw + gap), 36);
+            lv_obj_set_style_radius(b, 18, 0);
+            lv_obj_set_style_text_font(lv_obj_get_child(b, 0), &lv_font_montserrat_14, 0);
+            d_seg[g][k] = b;
+        }
+        d_hint[g] = ui_lbl(it, &lv_font_montserrat_12, C_DIM, hints[g], LV_ALIGN_TOP_MID, 0, 78);
+        lv_obj_set_width(d_hint[g], ROW_W - 30);
+        lv_obj_set_style_text_align(d_hint[g], LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(d_hint[g], LV_LABEL_LONG_DOT);
+    }
+
+    static const char *btn[2] = { LV_SYMBOL_IMAGE "  Test patterns", LV_SYMBOL_LEFT "  Back" };
+    for (int i = 0; i < 2; i++) {
+        it = d_item[D_TEST + i] = ui_button(d_form, ROW_W, 52, i ? C_GREY : C_PANEL, btn[i], d_btn_cb, (void *)(intptr_t)(D_TEST + i));
+        lv_obj_set_style_radius(it, 20, 0);
+        lv_obj_set_style_border_color(it, C_BLUE, 0);
+    }
+
     pg->refresh = display_refresh;
     pg->enter = display_enter;
     pg->rotate = display_rotate;
     pg->confirm = display_confirm;
     ui_register_hidden(MX_PAGE_DISPLAY, MX_PAGE_SETTINGS);
+}
+
+/* ------------------------------------------------------------------ */
+/* DISPLAY TEST: full-screen patterns to judge the panel by eye          */
+/* ------------------------------------------------------------------ */
+
+#define DT_BARS 8
+#define DT_CHECK 8
+static lv_obj_t *dt_bg, *dt_bar[DT_BARS], *dt_chk[DT_CHECK * DT_CHECK], *dt_pill, *dt_lbl;
+static lv_timer_t *dt_timer;
+static int dt_idx;
+enum { DT_WHITE, DT_RED, DT_GREEN, DT_BLUE, DT_GREY, DT_BLACK, DT_VGRAD, DT_HGRAD, DT_COLBARS, DT_CHECKER, DT_N };
+static const char *dt_names[DT_N] = { "White", "Red", "Green", "Blue", "Grey 50%", "Black", "Grey ramp, vertical",
+                                      "Grey ramp, horizontal", "Colour bars", "Checkerboard" };
+
+static void dt_pill_hide(lv_timer_t *t)
+{
+    (void)t;
+    ui_show(dt_pill, false);
+    dt_timer = NULL;
+}
+
+static void dt_draw(void)
+{
+    static const uint32_t solid[6] = { 0xFFFFFF, 0xFF0000, 0x00FF00, 0x0000FF, 0x808080, 0x000000 };
+    static const uint32_t bars[DT_BARS] = { 0xFFFFFF, 0xFFFF00, 0x00FFFF, 0x00FF00, 0xFF00FF, 0xFF0000, 0x0000FF, 0x000000 };
+    lv_obj_set_style_bg_grad_dir(dt_bg, LV_GRAD_DIR_NONE, 0);
+    if (dt_idx < 6) lv_obj_set_style_bg_color(dt_bg, lv_color_hex(solid[dt_idx]), 0);
+    if (dt_idx == DT_VGRAD || dt_idx == DT_HGRAD) {
+        lv_obj_set_style_bg_color(dt_bg, lv_color_black(), 0);
+        lv_obj_set_style_bg_grad_color(dt_bg, lv_color_white(), 0);
+        lv_obj_set_style_bg_grad_dir(dt_bg, dt_idx == DT_VGRAD ? LV_GRAD_DIR_VER : LV_GRAD_DIR_HOR, 0);
+    }
+    for (int i = 0; i < DT_BARS; i++) {
+        ui_show(dt_bar[i], dt_idx == DT_COLBARS);
+        lv_obj_set_style_bg_color(dt_bar[i], lv_color_hex(bars[i]), 0);
+    }
+    if (dt_idx == DT_CHECKER) lv_obj_set_style_bg_color(dt_bg, lv_color_black(), 0);
+    for (int i = 0; i < DT_CHECK * DT_CHECK; i++) ui_show(dt_chk[i], dt_idx == DT_CHECKER);
+
+    lv_label_set_text_fmt(dt_lbl, "%d/%d  %s\ntap for next, swipe right to leave", dt_idx + 1, DT_N, dt_names[dt_idx]);
+    ui_show(dt_pill, true);
+    if (dt_timer) lv_timer_del(dt_timer);
+    dt_timer = lv_timer_create(dt_pill_hide, 2500, NULL);
+    lv_timer_set_repeat_count(dt_timer, 1);
+}
+
+static void dt_next(void) { dt_idx = (dt_idx + 1) % DT_N; dt_draw(); }
+static bool dt_rotate(int dir) { dt_idx = (dt_idx + dir + DT_N) % DT_N; dt_draw(); return true; }
+static void dt_enter(void) { dt_idx = 0; dt_draw(); }
+
+static void dt_leave(void)
+{
+    if (dt_timer) { lv_timer_del(dt_timer); dt_timer = NULL; }
+}
+
+static void build_dtest(void)
+{
+    page_t *pg = &P[MX_PAGE_DTEST];
+    pg->scr = ui_scr();
+    ui_chrome(pg, false);
+    ui_show(pg->batt.cont, false);
+    ui_show(pg->batt.pct, false);
+    dt_bg = ui_box(pg->scr, W, H, lv_color_white(), 0);
+    for (int i = 0; i < DT_BARS; i++) {
+        dt_bar[i] = ui_box(dt_bg, W / DT_BARS + 1, H, lv_color_white(), 0);
+        lv_obj_set_pos(dt_bar[i], i * W / DT_BARS, 0);
+    }
+    int c = (W + DT_CHECK - 1) / DT_CHECK;
+    for (int i = 0; i < DT_CHECK * DT_CHECK; i++) {
+        int r = i / DT_CHECK, k = i % DT_CHECK;
+        dt_chk[i] = ui_box(dt_bg, c, c, (r + k) & 1 ? lv_color_black() : lv_color_white(), 0);
+        lv_obj_set_pos(dt_chk[i], k * c, r * c);
+        if ((r + k) & 1) ui_show(dt_chk[i], false);
+    }
+    dt_pill = ui_box(pg->scr, 260, 52, C_BG, 26);
+    lv_obj_set_style_bg_opa(dt_pill, LV_OPA_70, 0);
+    lv_obj_align(dt_pill, LV_ALIGN_BOTTOM_MID, 0, -40);
+    dt_lbl = ui_lbl(dt_pill, &lv_font_montserrat_14, C_TEXT, "", LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_text_align(dt_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    pg->tap = dt_next;
+    pg->confirm = dt_next;
+    pg->rotate = dt_rotate;
+    pg->enter = dt_enter;
+    pg->leave = dt_leave;
+    ui_register_hidden(MX_PAGE_DTEST, MX_PAGE_DISPLAY);
 }
 
 /* ------------------------------------------------------------------ */
@@ -516,10 +686,7 @@ static void time_confirm(void)
         M->auto_time = !M->auto_time;
         if (A->set_auto_time) A->set_auto_time(M->auto_time);
         break;
-    case T_ZONE:
-        M->tz_idx = (M->tz_idx + 1) % mx_tz_n;
-        if (A->set_tz) A->set_tz(M->tz_idx);
-        break;
+    case T_ZONE: ui_goto(MX_PAGE_TZ, true); return;
     case T_SET: ui_goto(MX_PAGE_TIMESET, true); return;
     case T_BACK: ui_back(); return;
     }
@@ -528,8 +695,7 @@ static void time_confirm(void)
 
 static void time_enter(void)
 {
-    L_time.sel = 0;
-    L_time.first = 0;
+    ui_list_reset(&L_time);
 }
 
 static void build_time(void)
@@ -550,6 +716,51 @@ static void build_time(void)
     pg->rotate = list_page_rotate;
     pg->confirm = time_confirm;
     ui_register_hidden(MX_PAGE_TIME, MX_PAGE_SETTINGS);
+}
+
+/* ---- time zone: the whole table as a list ------------------------- */
+
+static ui_list_t L_tz;
+
+static void tz_refresh(void)
+{
+    for (int i = 0; i < mx_tz_n && i < LIST_MAX - 1; i++) {
+        ui_list_set(&L_tz, i, NULL, NULL, i == M->tz_idx ? LV_SYMBOL_OK : "");
+        ui_text_color(L_tz.val[i], C_GREEN);
+    }
+}
+
+static void tz_confirm(void)
+{
+    int row = ui_list_row(&L_tz);
+    if (row >= 0 && row < mx_tz_n && row < L_tz.n - 1) {
+        M->tz_idx = row;
+        if (A->set_tz) A->set_tz(row);
+    }
+    ui_back();
+}
+
+static void tz_enter(void)
+{
+    ui_list_reset(&L_tz);
+    if (M->tz_idx > 0) L_tz.sel = M->tz_idx;
+}
+
+static void build_tz(void)
+{
+    page_t *pg = &P[MX_PAGE_TZ];
+    pg->scr = ui_scr();
+    ui_chrome(pg, true);
+    page_title(pg, "Time zone");
+    L_tz.parent = pg->scr;
+    ui_list_of[MX_PAGE_TZ] = &L_tz;
+    for (int i = 0; i < mx_tz_n && i < LIST_MAX - 1; i++) ui_list_add(&L_tz, lv_color_hex(0x1E90FF), LV_SYMBOL_GPS, mx_tz[i].name, NULL, ui_row_click);
+    ui_list_add(&L_tz, C_GREY, LV_SYMBOL_LEFT, "Back", NULL, ui_row_click);
+    pg->refresh = tz_refresh;
+    pg->enter = tz_enter;
+    pg->rotate = list_page_rotate;
+    pg->confirm = tz_confirm;
+    ui_register_hidden(MX_PAGE_TZ, MX_PAGE_TIME);
 }
 
 /* ---- the editor: year, month, day, hour, minute ------------------- */
@@ -685,7 +896,6 @@ static void build_timeset(void)
 enum { C_REINSTALL, C_BACK, C_N };
 static ui_list_t L_chip;
 static lv_obj_t *c_status, *c_detail, *c_arc;
-static bool c_armed;
 
 static void chip_refresh(void)
 {
@@ -721,34 +931,33 @@ static void chip_refresh(void)
     ui_set_text(c_detail, detail);
     lv_arc_set_value(c_arc, flashing ? M->chip_pct : (M->chip_state == MX_CHIP_DONE ? 100 : 0));
     if (flashing) lv_obj_clear_flag(c_arc, LV_OBJ_FLAG_HIDDEN); else lv_obj_add_flag(c_arc, LV_OBJ_FLAG_HIDDEN);
-    ui_list_set(&L_chip, C_REINSTALL, c_armed ? "Tap again to install" : "Reinstall firmware", c_armed ? "About a minute, do not unplug" : "Write chip firmware", NULL);
+    ui_list_set(&L_chip, C_REINSTALL, "Reinstall firmware", "Write the stock camera chip firmware", NULL);
     L_chip.skip[C_REINSTALL] = flashing;
     L_chip.skip[C_BACK] = flashing;
     ui_list_layout(&L_chip);
 }
 
+static void do_chip_install(void)
+{
+    if (A->chip_reinstall) A->chip_reinstall();
+}
+
 static bool chip_rotate(int dir)
 {
     if (M->chip_state == MX_CHIP_FLASHING) return true;
-    c_armed = false;
     return ui_list_rotate(&L_chip, dir);
 }
 
 static void chip_confirm(void)
 {
     if (M->chip_state == MX_CHIP_FLASHING) return;
-    if (L_chip.sel == C_BACK) { c_armed = false; ui_back(); return; }
-    if (!c_armed) { c_armed = true; chip_refresh(); return; }
-    c_armed = false;
-    if (A->chip_reinstall) A->chip_reinstall();
-    chip_refresh();
+    if (L_chip.sel == C_BACK) { ui_back(); return; }
+    ui_confirm("Reinstall firmware?", "Takes about a minute. Keep the watch powered.", "Install", lv_color_hex(0xE040A0), do_chip_install);
 }
 
 static void chip_enter(void)
 {
-    c_armed = false;
-    L_chip.sel = 0;
-    L_chip.first = 0;
+    ui_list_reset(&L_chip);
 }
 
 static void build_chip(void)
@@ -798,5 +1007,7 @@ void ui_build_settings_pages(void)
     build_display();
     build_time();
     build_timeset();
+    build_tz();
     build_chip();
+    build_dtest();
 }

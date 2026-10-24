@@ -14,6 +14,7 @@
 #include <sys/time.h>
 #include <time.h>
 
+#include "driver/ledc.h"
 #include "esp_lvgl_port.h"
 #include "esp_log.h"
 #include "esp_sntp.h"
@@ -59,6 +60,8 @@ static QueueHandle_t s_cmdq;
 static volatile bool s_stop_rec, s_recording, s_chip_busy, s_rtc_written;
 static volatile int64_t s_last_activity_ms;
 static bool s_dimmed, s_off;
+static bool s_usb_was;          /* USB power seen at the last check */
+static int s_bat_avg = -1;      /* smoothed battery percentage */
 static uint64_t s_last_sig_ts;
 
 void mx_activity(void)
@@ -106,6 +109,29 @@ static void act_brightness(int pct)
     mx_cfg()->brightness = (uint8_t)pct;
     mx_cfg_save();
     bsp_lcd_brightness_set(pct);
+}
+
+/* while a slider moves: light only, the setting is saved on release */
+static void act_preview_brightness(int pct)
+{
+    bsp_lcd_brightness_set(pct);
+}
+
+/* The BSP drives the backlight from LEDC timer 1 at 5 kHz. A faster PWM
+   does not change what the eye sees but removes the dark bands a phone
+   camera records when it photographs the screen. */
+static void backlight_freq_apply(int idx)
+{
+    static const uint32_t hz[3] = { 5000, 20000, 40000 };
+    if (idx < 0 || idx > 2) idx = 0;
+    ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_1, hz[idx]);
+}
+
+static void act_bl_freq(int idx)
+{
+    mx_cfg()->bl_freq = (uint8_t)idx;
+    mx_cfg_save();
+    backlight_freq_apply(idx);
 }
 
 static void act_volume(int pct)
@@ -216,6 +242,7 @@ static const mx_actions_t ACTIONS = {
     .journal_toggle = act_journal,
     .set_mode = act_set_mode,
     .set_brightness = act_brightness,
+    .preview_brightness = act_preview_brightness,
     .set_volume = act_volume,
     .snapshot = act_snapshot,
     .wifi_set_enabled = act_wifi_enable,
@@ -225,6 +252,7 @@ static const mx_actions_t ACTIONS = {
     .bt_set_enabled = act_bt,
     .set_timeout = act_timeout,
     .set_disp_speed = act_disp_speed,
+    .set_bl_freq = act_bl_freq,
     .set_time = act_set_time,
     .set_tz = act_set_tz,
     .set_auto_time = act_auto_time,
@@ -631,10 +659,22 @@ static void app_task(void *arg)
             time_t nowt = time(NULL);
             struct tm lt;
             localtime_r(&nowt, &lt);
-            bool bat_due = t - last_bat >= 20000;
-            int pct = 0;
-            bool chg = false;
-            if (bat_due) { last_bat = t; pct = bsp_battery_get_percent(); chg = bsp_system_is_charging(); }
+            /* USB power and "full" come from the charger's pins every second
+               (the BSP's bsp_system_is_charging() reads its pin inverted);
+               the gauge is an ADC average, read every 15 s and smoothed so
+               the number does not jump around */
+            bool usb = bsp_exp_io_get_level(BSP_PWR_VBUS_IN_DET) == 0;
+            bool full = usb && bsp_exp_io_get_level(BSP_PWR_STDBY_DET) == 0;
+            bool bat_due = t - last_bat >= 15000 || usb != s_usb_was;
+            s_usb_was = usb;
+            int pct = M.battery;
+            if (bat_due) {
+                last_bat = t;
+                int raw = bsp_battery_get_percent();
+                pct = s_bat_avg < 0 ? raw : (s_bat_avg * 3 + raw + 2) / 4;
+                if (full) pct = 100;
+                s_bat_avg = pct;
+            }
             bool sd_due = t - last_sd >= 4000;
             mx_sd_state_t sds = mx_sd_state();
             uint32_t sd_tot = 0, sd_free = 0;
@@ -652,7 +692,9 @@ static void app_task(void *arg)
                 M.wifi_state = ns.state;
                 strlcpy(M.ssid, ns.ssid, sizeof M.ssid);
                 strlcpy(M.ip, ns.ip, sizeof M.ip);
-                if (bat_due) { M.battery = pct; M.charging = chg; }
+                M.battery = pct;
+                M.charging = usb;
+                M.charged = full;
                 M.sd_state = sds == MX_SD_OK ? MX_SD_ST_OK : sds == MX_SD_ERROR ? MX_SD_ST_ERROR : MX_SD_ST_NONE;
                 if (sd_due) { M.sd_total_mb = sd_tot; M.sd_free_mb = sd_free; }
                 M.chip_state = chip;
@@ -713,7 +755,10 @@ void mx_app_start(void)
     M.volume = c->volume;
     M.pin_set = c->pin_set;
     M.locked = c->pin_set;
-    M.battery = 100;
+    s_usb_was = bsp_exp_io_get_level(BSP_PWR_VBUS_IN_DET) == 0;
+    M.charging = s_usb_was;
+    M.battery = s_bat_avg = bsp_battery_get_percent();
+    M.bl_freq = c->bl_freq;
     M.timeout_idx = c->timeout_idx;
     M.disp_speed = c->disp_speed;
     M.auto_time = c->auto_time;
@@ -735,6 +780,7 @@ void mx_app_start(void)
     ui_init(&M, &ACTIONS);
     lv_timer_create(ui_tick, 50, NULL);
     lvgl_port_unlock();
+    backlight_freq_apply(c->bl_freq);
     bsp_lcd_brightness_set(c->brightness);
 
     xTaskCreatePinnedToCore(app_task, "mx_app", 12288, NULL, 4, NULL, 0);

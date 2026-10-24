@@ -1,17 +1,22 @@
 /*
  * Maximus OS - screens.
  *
- * Ten pages on a carousel (knob rotation or swipe), laid out for the round
- * 412x412 panel: everything important sits inside a ~330 px circle. Lists
- * (modes, notifications, settings) capture the knob once confirmed and give
- * it back through their "Back" row. Settings opens sub-pages (Wi-Fi, display,
- * date and time, camera chip) that sit off the carousel and return to their
- * parent. This file is the core and the AI pages; ui_settings.c and
- * ui_camera.c hold the rest.
+ * Ten pages on a carousel, laid out for the round 412x412 panel: everything
+ * important sits inside a ~340 px circle. Settings opens sub-pages that sit
+ * off the carousel and return to their parent.
  *
+ * Touch, like a phone:
+ *   swipe right-to-left / left-to-right  next / previous page (Back on a sub-page)
+ *   swipe top-to-bottom                  quick panel (Wi-Fi, Bluetooth, brightness, volume)
+ *   swipe bottom-to-top                  app grid
+ *   drag a list                          scroll it; tap a row to open it
  * Knob: rotate = move, click (under 2 s) = select, hold 2 s = Home, hold 5 s
- * = power off. Touch: tap, swipe sideways to change page, swipe up/down in
- * lists.
+ * = power off. Lists on the carousel take the knob after a first click and
+ * give it back through their "Back" row.
+ *
+ * This file is the core (widgets, lists, gestures, navigation) and the AI
+ * pages; ui_shell.c holds the app grid, quick panel and dialogs, ui_kb.c the
+ * keyboards, ui_settings.c and ui_camera.c the rest.
  */
 #include "ui_priv.h"
 
@@ -38,6 +43,7 @@ const mx_mode_info_t mx_modes[4] = {
 };
 
 static lv_obj_t *ring_arc;           /* mirrors the RGB ring on the home page */
+static bool knob_mode;               /* the knob was used last: show its highlight */
 
 /* overlays */
 static lv_obj_t *hold_dim, *hold_box, *hold_arc, *hold_lbl, *blank_box;
@@ -78,7 +84,8 @@ lv_obj_t *ui_box(lv_obj_t *p, int w, int h, lv_color_t bg, int radius)
     lv_obj_set_style_bg_color(o, bg, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(o, radius, 0);
-    lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    /* decoration only: taps fall through to the page unless a caller opts in */
+    lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     return o;
 }
 
@@ -87,11 +94,43 @@ lv_obj_t *ui_circle(lv_obj_t *p, int d, lv_color_t bg)
     return ui_box(p, d, d, bg, LV_RADIUS_CIRCLE);
 }
 
+void ui_grad(lv_obj_t *o, lv_color_t top, lv_color_t bottom)
+{
+    lv_obj_set_style_bg_color(o, top, 0);
+    lv_obj_set_style_bg_grad_color(o, bottom, 0);
+    lv_obj_set_style_bg_grad_dir(o, LV_GRAD_DIR_VER, 0);
+}
+
 void ui_glow(lv_obj_t *o, lv_color_t c, int spread)
 {
     lv_obj_set_style_shadow_color(o, c, 0);
     lv_obj_set_style_shadow_width(o, spread, 0);
     lv_obj_set_style_shadow_opa(o, LV_OPA_60, 0);
+}
+
+void ui_show(lv_obj_t *o, bool on)
+{
+    if (!o) return;
+    if (on == !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+    if (on) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* A pill or round button that darkens while pressed and calls cb on a tap. */
+lv_obj_t *ui_button(lv_obj_t *p, int w, int h, lv_color_t bg, const char *txt, lv_event_cb_t cb, void *user)
+{
+    lv_obj_t *b = ui_box(p, w, h, bg, h / 2 > 26 ? 26 : h / 2);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(b, lv_color_lighten(bg, 40), LV_STATE_PRESSED);
+    lv_obj_set_style_transform_width(b, -2, LV_STATE_PRESSED);
+    lv_obj_set_style_transform_height(b, -2, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(b, ui_press_cb, LV_EVENT_PRESSED, NULL);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+    if (txt) {
+        lv_obj_t *l = ui_lbl(b, &lv_font_montserrat_16, C_TEXT, txt, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
+    }
+    return b;
 }
 
 /* Setting identical text still invalidates the label; skip it. */
@@ -144,8 +183,8 @@ static void time_str(char *buf, size_t n)
 
 static void date_str(char *buf, size_t n)
 {
-    if (!M->time_valid) { buf[0] = 0; return; }
-    strftime(buf, n, "%a, %b %d", &M->now);
+    if (!M->time_valid) { snprintf(buf, n, "Time not set"); return; }
+    strftime(buf, n, "%A, %B %d", &M->now);
 }
 
 /* A finger that moved is a swipe, not a tap: LVGL still sends CLICKED after
@@ -165,10 +204,8 @@ bool ui_is_tap(void)
     if (!i) return true;                       /* synthetic click from code */
     lv_point_t p;
     lv_indev_get_point(i, &p);
-    return abs(p.x - press_pt.x) < 16 && abs(p.y - press_pt.y) < 16;
+    return abs(p.x - press_pt.x) < 18 && abs(p.y - press_pt.y) < 18;
 }
-
-static void swipe_nav(int dir);
 
 static void on_scr_event(lv_event_t *e)
 {
@@ -176,71 +213,74 @@ static void on_scr_event(lv_event_t *e)
     if (code == LV_EVENT_PRESSED) {
         ui_press_cb(e);
     } else if (code == LV_EVENT_CLICKED) {
-        if (ui_is_tap()) ui_input(MX_IN_CONFIRM);
-    } else if (code == LV_EVENT_GESTURE) {
-        lv_dir_t d = lv_indev_get_gesture_dir(lv_indev_get_act());
-        page_t *pg = &P[cur];
-        if (M->locked) return;
-        if (pg->gesture && pg->gesture(d)) return;
-        if (d == LV_DIR_LEFT) swipe_nav(1);
-        else if (d == LV_DIR_RIGHT) swipe_nav(-1);
-        else if ((d == LV_DIR_TOP || d == LV_DIR_BOTTOM) && ui_list_of[cur]) {
-            pg->capture = true;
-            ui_input(d == LV_DIR_TOP ? MX_IN_RIGHT : MX_IN_LEFT);
+        /* a tap on empty space: only pages that ask for it react */
+        if (!ui_is_tap() || M->locked) return;
+        mx_activity();
+        if (P[cur].tap) {
+            P[cur].tap();
+            ui_refresh();
         }
     }
 }
 
 /* ---- battery icon ------------------------------------------------- */
 
+#define BATT_IN_W 24
+
 void ui_batt_create(batt_t *b, lv_obj_t *scr)
 {
     b->cont = lv_obj_create(scr);
     lv_obj_remove_style_all(b->cont);
-    lv_obj_set_size(b->cont, 50, 18);
+    lv_obj_set_size(b->cont, 52, 18);
     lv_obj_clear_flag(b->cont, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
+    /* the bolt sits left of the outline while USB power is in */
     b->bolt = ui_lbl(b->cont, &lv_font_montserrat_14, C_GREEN, LV_SYMBOL_CHARGE, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_add_flag(b->bolt, LV_OBJ_FLAG_HIDDEN);
 
-    b->body = ui_box(b->cont, 28, 15, C_BG, 4);
+    b->body = ui_box(b->cont, BATT_IN_W + 6, 16, C_BG, 4);
     lv_obj_set_style_bg_opa(b->body, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(b->body, 2, 0);
     lv_obj_set_style_border_color(b->body, lv_color_hex(0xC9CEDA), 0);
-    lv_obj_align(b->body, LV_ALIGN_LEFT_MID, 18, 0);
+    lv_obj_align(b->body, LV_ALIGN_LEFT_MID, 17, 0);
 
     b->nub = ui_box(b->cont, 3, 7, lv_color_hex(0xC9CEDA), 1);
-    lv_obj_align(b->nub, LV_ALIGN_LEFT_MID, 47, 0);
+    lv_obj_align(b->nub, LV_ALIGN_LEFT_MID, 17 + BATT_IN_W + 6, 0);
 
-    b->fill = ui_box(b->body, 24, 11, C_GREEN, 2);
-    lv_obj_align(b->fill, LV_ALIGN_LEFT_MID, 0, 0);
+    b->fill = ui_box(b->body, BATT_IN_W, 10, C_GREEN, 2);
+    lv_obj_align(b->fill, LV_ALIGN_LEFT_MID, 1, 0);
 
     b->pct = ui_lbl(scr, &lv_font_montserrat_14, C_TEXT, "", LV_ALIGN_TOP_MID, 0, 0);
+    b->shown_pct = -1;
+    b->shown_chg = -1;
 }
 
-static void batt_apply(batt_t *b)
+void ui_batt_apply(batt_t *b)
 {
     if (!b->cont) return;
     int pct = M->battery < 0 ? 0 : M->battery > 100 ? 100 : M->battery;
-    lv_color_t col = M->charging || pct > 30 ? C_GREEN : pct > 15 ? C_ORANGE : C_RED;
-    int w = 24 * pct / 100;
-    if (w < 2) w = 2;
-    if (lv_obj_get_width(b->fill) != w) lv_obj_set_width(b->fill, w);
+    int chg = M->charging ? 1 : 0;
+    if (pct == b->shown_pct && chg == b->shown_chg) return;
+    b->shown_pct = pct;
+    b->shown_chg = chg;
+    lv_color_t col = chg ? C_GREEN : pct > 30 ? lv_color_hex(0xE9EDF5) : pct > 15 ? C_ORANGE : C_RED;
+    int w = BATT_IN_W * pct / 100;
+    if (w < 3) w = 3;
+    lv_obj_set_width(b->fill, w);
     lv_obj_set_style_bg_color(b->fill, col, 0);
-    if (M->charging) lv_obj_clear_flag(b->bolt, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(b->bolt, LV_OBJ_FLAG_HIDDEN);
+    ui_show(b->bolt, chg);
     char t[8];
     snprintf(t, sizeof t, "%d%%", pct);
     ui_set_text(b->pct, t);
-    lv_obj_set_style_text_color(b->pct, pct <= 15 && !M->charging ? C_RED : C_TEXT, 0);
+    lv_obj_set_style_text_color(b->pct, pct <= 15 && !chg ? C_RED : C_TEXT, 0);
 }
 
-/* Time in the middle, battery to its left (bolt, icon), percentage to its right. */
+/* Time in the middle, battery to its left, percentage to its right. */
 void ui_chrome_place(page_t *pg)
 {
     if (!pg->time) {
-        lv_obj_align(pg->batt.cont, LV_ALIGN_TOP_MID, -18, 14);
-        lv_obj_align_to(pg->batt.pct, pg->batt.cont, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
+        lv_obj_align(pg->batt.cont, LV_ALIGN_TOP_MID, -20, 16);
+        lv_obj_align_to(pg->batt.pct, pg->batt.cont, LV_ALIGN_OUT_RIGHT_MID, 4, 0);
         return;
     }
     lv_obj_update_layout(pg->time);
@@ -253,9 +293,8 @@ void ui_chrome(page_t *pg, bool with_time)
 {
     lv_obj_add_event_cb(pg->scr, on_scr_event, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(pg->scr, on_scr_event, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_event_cb(pg->scr, on_scr_event, LV_EVENT_GESTURE, NULL);
     if (with_time) {
-        pg->time = ui_lbl(pg->scr, &lv_font_montserrat_20, C_TEXT, "00:00", LV_ALIGN_TOP_MID, 0, 22);
+        pg->time = ui_lbl(pg->scr, &lv_font_montserrat_20, C_TEXT, "00:00", LV_ALIGN_TOP_MID, 0, 20);
     }
     ui_batt_create(&pg->batt, pg->scr);
     ui_chrome_place(pg);
@@ -265,14 +304,14 @@ static void dots_build(lv_obj_t *scr, lv_obj_t **arr)
 {
     lv_obj_t *row = lv_obj_create(scr);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, 160, 12);
-    lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -26);
+    lv_obj_set_size(row, 170, 12);
+    lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -22);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, 7, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     for (int i = 0; i < MX_PAGE_CAROUSEL_N; i++) {
-        arr[i] = ui_circle(row, 7, lv_color_hex(0x3A4254));
+        arr[i] = ui_box(row, 7, 7, C_FAINT, 4);
         lv_obj_clear_flag(arr[i], LV_OBJ_FLAG_CLICKABLE);
     }
 }
@@ -286,15 +325,44 @@ static void dots_update(void)
         if (!P[pg].scr) continue;
         for (int i = 0; i < MX_PAGE_CAROUSEL_N; i++) {
             bool on = (i == pg);
-            lv_obj_set_style_bg_color(page_dots[pg][i], on ? C_BLUE : lv_color_hex(0x3A4254), 0);
-            lv_obj_set_size(page_dots[pg][i], on ? 9 : 7, on ? 9 : 7);
+            lv_obj_set_style_bg_color(page_dots[pg][i], on ? C_BLUE : C_FAINT, 0);
+            lv_obj_set_size(page_dots[pg][i], on ? 18 : 7, 7);
         }
     }
 }
 
 /* ------------------------------------------------------------------ */
-/* generic list (modes, notifications, settings and their sub-pages)   */
+/* lists                                                               */
 /* ------------------------------------------------------------------ */
+
+static void list_ensure(ui_list_t *L)
+{
+    if (L->cont) return;
+    int top = L->top ? L->top : LIST_TOP;
+    int h = L->height ? L->height : LIST_BOTTOM - top;
+    if (h < ROW_H + 8) h = ROW_H + 8;
+    lv_obj_t *c = lv_obj_create(L->parent);
+    lv_obj_remove_style_all(c);
+    lv_obj_set_size(c, ROW_W + 8, h);
+    lv_obj_set_pos(c, (W - ROW_W - 8) / 2, top);
+    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(c, ROW_GAP, 0);
+    lv_obj_set_style_pad_ver(c, 4, 0);
+    lv_obj_add_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(c, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(c, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE);
+    L->cont = c;
+    L->shown_sel = -1;
+}
+
+static bool list_highlight_on(const ui_list_t *L)
+{
+    if (!knob_mode) return false;
+    if (ui_list_of[cur] == L) return P[cur].capture || P[cur].hidden;
+    return true;
+}
 
 void ui_list_layout(ui_list_t *L)
 {
@@ -302,53 +370,64 @@ void ui_list_layout(ui_list_t *L)
     for (int i = 0; i < L->n; i++) L->ord[i] = L->skip[i] ? -1 : ord++;
     L->count = ord;
     if (L->sel >= L->count) L->sel = L->count ? L->count - 1 : 0;
-    if (L->sel < L->first) L->first = L->sel;
-    if (L->sel >= L->first + LIST_VIS) L->first = L->sel - LIST_VIS + 1;
-    if (L->first < 0) L->first = 0;
-    /* only touch the objects when something that affects them changed */
-    uint32_t sig = (uint32_t)L->sel * 31u + (uint32_t)L->first * 977u + (uint32_t)L->top * 7919u;
+    if (L->sel < 0) L->sel = 0;
+    bool hl = list_highlight_on(L);
+    uint32_t sig = (uint32_t)L->sel * 31u + (hl ? 7u : 3u);
     for (int i = 0; i < L->n; i++) sig = sig * 33u + (L->skip[i] ? 1u : 2u);
     if (L->sig_ok && sig == L->sig) return;
     L->sig = sig;
     L->sig_ok = true;
-    int top = L->top ? L->top : LIST_TOP;
     for (int i = 0; i < L->n; i++) {
         int o = L->ord[i];
-        if (o < 0 || o < L->first || o >= L->first + LIST_VIS) { lv_obj_add_flag(L->row[i], LV_OBJ_FLAG_HIDDEN); continue; }
-        lv_obj_clear_flag(L->row[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_pos(L->row[i], (W - 300) / 2, top + (o - L->first) * (ROW_H + ROW_GAP));
-        bool sel = (o == L->sel);
+        ui_show(L->row[i], o >= 0);
+        if (o < 0) continue;
+        bool sel = hl && o == L->sel;
         lv_obj_set_style_bg_color(L->row[i], sel ? C_PANEL_SEL : C_PANEL, 0);
         lv_obj_set_style_border_width(L->row[i], sel ? 2 : 0, 0);
-        lv_obj_set_style_border_color(L->row[i], C_BLUE, 0);
+        if (sel && L->sel != L->shown_sel) lv_obj_scroll_to_view(L->row[i], LV_ANIM_ON);
     }
+    if (hl) L->shown_sel = L->sel;
+}
+
+void ui_list_reset(ui_list_t *L)
+{
+    L->sel = 0;
+    L->first = 0;
+    L->shown_sel = -1;
+    L->sig_ok = false;
+    if (L->cont) lv_obj_scroll_to_y(L->cont, 0, LV_ANIM_OFF);
 }
 
 lv_obj_t *ui_list_add(ui_list_t *L, lv_color_t ic_bg, const char *ic_txt, const char *title, const char *sub, lv_event_cb_t cb)
 {
+    if (L->n >= LIST_MAX) return NULL;
+    list_ensure(L);
     int i = L->n++;
-    lv_obj_t *r = ui_box(L->parent, 300, ROW_H, C_PANEL, 18);
+    lv_obj_t *r = ui_box(L->cont, ROW_W, ROW_H, C_PANEL, 20);
     L->row[i] = r;
     lv_obj_set_style_border_color(r, C_BLUE, 0);
+    lv_obj_set_style_bg_color(r, C_PANEL_HI, LV_STATE_PRESSED);
     lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(r, ui_press_cb, LV_EVENT_PRESSED, NULL);
     if (cb) lv_obj_add_event_cb(r, cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
 
-    lv_obj_t *c = ui_circle(r, 36, ic_bg);
+    lv_obj_t *c = ui_circle(r, 38, ic_bg);
+    ui_grad(c, lv_color_lighten(ic_bg, 50), lv_color_darken(ic_bg, 40));
     lv_obj_align(c, LV_ALIGN_LEFT_MID, 10, 0);
     lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE);
     L->ic[i] = ui_lbl(c, &lv_font_montserrat_16, C_TEXT, ic_txt, LV_ALIGN_CENTER, 0, 0);
 
-    L->tx[i] = ui_lbl(r, &lv_font_montserrat_16, C_TEXT, title, LV_ALIGN_TOP_LEFT, 56, sub ? 8 : 18);
-    lv_obj_set_width(L->tx[i], 170);
+    L->tx[i] = ui_lbl(r, &lv_font_montserrat_16, C_TEXT, title, LV_ALIGN_TOP_LEFT, 58, sub ? 9 : 19);
+    lv_obj_set_width(L->tx[i], 168);
     lv_label_set_long_mode(L->tx[i], LV_LABEL_LONG_DOT);
     L->sub[i] = NULL;
     if (sub) {
-        L->sub[i] = ui_lbl(r, &lv_font_montserrat_12, C_DIM, sub, LV_ALIGN_TOP_LEFT, 56, 32);
-        lv_obj_set_width(L->sub[i], 190);
+        L->sub[i] = ui_lbl(r, &lv_font_montserrat_12, C_DIM, sub, LV_ALIGN_TOP_LEFT, 58, 33);
+        lv_obj_set_width(L->sub[i], 186);
         lv_label_set_long_mode(L->sub[i], LV_LABEL_LONG_DOT);
     }
-    L->val[i] = ui_lbl(r, &lv_font_montserrat_14, C_DIM, "", LV_ALIGN_RIGHT_MID, -12, 0);
+    L->val[i] = ui_lbl(r, &lv_font_montserrat_14, C_DIM, "", LV_ALIGN_RIGHT_MID, -14, 0);
+    L->sig_ok = false;
     return r;
 }
 
@@ -369,39 +448,131 @@ bool ui_list_rotate(ui_list_t *L, int dir)
     return true;
 }
 
+int ui_list_row(const ui_list_t *L)
+{
+    for (int i = 0; i < L->n; i++) if (L->ord[i] == L->sel) return i;
+    return -1;
+}
+
 void ui_row_click(lv_event_t *e)
 {
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     lv_event_stop_bubbling(e);
-    if (!ui_is_tap()) return;
-    if (!ui_list_of[cur]) return;
+    if (!ui_is_tap() || M->locked) return;
+    ui_list_t *L = ui_list_of[cur];
+    if (!L) return;
+    mx_activity();
     P[cur].capture = true;
-    ui_list_of[cur]->sel = ui_list_of[cur]->ord[i] >= 0 ? ui_list_of[cur]->ord[i] : 0;
-    ui_input(MX_IN_CONFIRM);
+    L->sel = L->ord[i] >= 0 ? L->ord[i] : 0;
+    L->sig_ok = false;
+    if (P[cur].confirm) P[cur].confirm();
+    ui_refresh();
 }
+
+/* ------------------------------------------------------------------ */
+/* gestures                                                            */
+/* ------------------------------------------------------------------ */
+
+/* LVGL's own gesture event fires on whatever object is under the finger and
+   gets lost inside scrolling lists, so the swipe is read here straight from
+   the touch input device: start point, end point, and whether a list
+   scrolled in between. */
+#define SWIPE_MIN 56
+
+static struct {
+    lv_indev_t *indev;
+    bool down, scrolled, on_screen, on_slider;   /* where the press began */
+    lv_point_t p0, last;
+    uint32_t t0;
+} G;
+
+static void gesture_eval(void)
+{
+    int dx = G.last.x - G.p0.x, dy = G.last.y - G.p0.y;
+    int ax = abs(dx), ay = abs(dy);
+    if (lv_tick_elaps(G.t0) > 1200) return;              /* a slow drag is not a swipe */
+    lv_dir_t d = LV_DIR_NONE;
+    if (ax >= SWIPE_MIN && ax * 2 > ay * 3 && !G.on_slider && (!G.scrolled || ax > ay * 3)) d = dx < 0 ? LV_DIR_LEFT : LV_DIR_RIGHT;
+    else if (ay >= SWIPE_MIN && ay * 2 > ax * 3 && !G.scrolled) d = dy < 0 ? LV_DIR_TOP : LV_DIR_BOTTOM;
+    if (d != LV_DIR_NONE) ui_swipe(d);
+}
+
+static void gesture_timer(lv_timer_t *t)
+{
+    (void)t;
+    if (!G.indev) {
+        for (lv_indev_t *i = lv_indev_get_next(NULL); i; i = lv_indev_get_next(i))
+            if (lv_indev_get_type(i) == LV_INDEV_TYPE_POINTER) G.indev = i;
+        if (!G.indev) return;
+    }
+    bool pressed = G.indev->proc.state == LV_INDEV_STATE_PRESSED;
+    lv_point_t p;
+    lv_indev_get_point(G.indev, &p);
+    if (pressed) {
+        if (!G.down) {
+            G.down = true;
+            G.scrolled = false;
+            G.p0 = p;
+            G.t0 = lv_tick_get();
+            lv_obj_t *hit = lv_indev_search_obj(lv_layer_top(), &p);
+            if (!hit || hit == lv_layer_top()) hit = lv_indev_search_obj(lv_scr_act(), &p);
+            G.on_screen = !hit || hit == lv_scr_act();
+            G.on_slider = hit && lv_obj_check_type(hit, &lv_slider_class);
+            if (knob_mode) {
+                knob_mode = false;                        /* a finger: hide the knob's highlight */
+                if (ui_list_of[cur]) { ui_list_of[cur]->sig_ok = false; ui_list_layout(ui_list_of[cur]); }
+            }
+        }
+        G.last = p;
+        if (lv_indev_get_scroll_obj(G.indev)) G.scrolled = true;
+    } else if (G.down) {
+        G.down = false;
+        gesture_eval();
+    }
+}
+
+bool ui_knob_mode(void) { return knob_mode; }
 
 /* ------------------------------------------------------------------ */
 /* HOME                                                                */
 /* ------------------------------------------------------------------ */
 
-static lv_obj_t *h_date;
+static lv_obj_t *h_clock, *h_date, *h_ic[4];
+
+static void home_open_assist(void)
+{
+    ui_goto(MX_PAGE_ASSIST, true);
+}
+
+static void home_halo_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!ui_is_tap() || M->locked) return;
+    mx_activity();
+    home_open_assist();
+}
 
 static void home_refresh(void)
 {
-    char b[24];
+    char b[32];
+    time_str(b, sizeof b);
+    ui_set_text(h_clock, b);
     date_str(b, sizeof b);
-    lv_label_set_text(h_date, b);
+    ui_set_text(h_date, b);
+    bool on[4] = {
+        M->wifi_state == MX_WIFI_CONNECTED,
+        M->bt_on,
+        M->sd_state == MX_SD_ST_OK,
+        M->chip_state == MX_CHIP_OK || M->chip_state == MX_CHIP_DONE,
+    };
+    for (int i = 0; i < 4; i++) ui_text_color(h_ic[i], on[i] ? C_BLUE : C_FAINT);
 }
 
 static void build_home(void)
 {
     page_t *pg = &P[MX_PAGE_HOME];
     pg->scr = ui_scr();
-    ui_chrome(pg, true);
-    lv_obj_align(pg->time, LV_ALIGN_TOP_MID, 0, 26);
-    lv_obj_set_style_text_font(pg->time, &lv_font_montserrat_28, 0);
-    ui_chrome_place(pg);
-    h_date = ui_lbl(pg->scr, &lv_font_montserrat_14, C_DIM, "", LV_ALIGN_TOP_MID, 0, 64);
+    ui_chrome(pg, false);                    /* the big clock below replaces the small one */
 
     /* status ring: same colour as the RGB LEDs */
     ring_arc = lv_arc_create(pg->scr);
@@ -415,20 +586,41 @@ static void build_home(void)
     lv_obj_set_style_arc_color(ring_arc, lv_color_hex(0x1B2438), LV_PART_MAIN);
     lv_obj_set_style_arc_width(ring_arc, 3, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(ring_arc, C_BLUE, LV_PART_INDICATOR);
+    lv_obj_move_background(ring_arc);
 
-    lv_obj_t *halo = ui_circle(pg->scr, 200, lv_color_hex(0x050A18));
-    lv_obj_align(halo, LV_ALIGN_CENTER, 0, -6);
+    h_clock = ui_lbl(pg->scr, &lv_font_montserrat_48, C_TEXT, "--:--", LV_ALIGN_TOP_MID, 0, 40);
+    h_date = ui_lbl(pg->scr, &lv_font_montserrat_16, C_DIM, "", LV_ALIGN_TOP_MID, 0, 98);
+
+    /* the helmet in a lit glass disc; tap it to talk */
+    lv_obj_t *halo = ui_circle(pg->scr, 156, lv_color_hex(0x0B1A3A));
+    ui_grad(halo, lv_color_hex(0x15306A), lv_color_hex(0x040814));
+    lv_obj_align(halo, LV_ALIGN_TOP_MID, 0, 132);
     lv_obj_set_style_border_width(halo, 2, 0);
     lv_obj_set_style_border_color(halo, C_BLUE, 0);
-    ui_glow(halo, C_BLUE, 36);
+    lv_obj_set_style_border_opa(halo, LV_OPA_70, 0);
+    ui_glow(halo, C_BLUE, 30);
+    lv_obj_add_flag(halo, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_border_color(halo, lv_color_hex(0x8FC0FF), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(halo, ui_press_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(halo, home_halo_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *im = lv_img_create(halo);
     lv_img_set_src(im, &mx_img_helmet);
+    lv_img_set_zoom(im, 256 * 132 / 190);
+    lv_img_set_antialias(im, true);
     lv_obj_center(im);
+    lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE);
 
-    ui_lbl(pg->scr, &lv_font_montserrat_28, C_TEXT, "MAXIMUS", LV_ALIGN_CENTER, 0, 124);
-    ui_lbl(pg->scr, &lv_font_montserrat_12, C_DIM, "AI COMPANION", LV_ALIGN_CENTER, 0, 150);
+    ui_lbl(pg->scr, &lv_font_montserrat_20, C_TEXT, "MAXIMUS", LV_ALIGN_TOP_MID, 0, 300);
+
+    /* Wi-Fi, Bluetooth, memory card, camera chip: lit when working */
+    static const char *ic[4] = { LV_SYMBOL_WIFI, LV_SYMBOL_BLUETOOTH, LV_SYMBOL_SD_CARD, LV_SYMBOL_EYE_OPEN };
+    for (int i = 0; i < 4; i++)
+        h_ic[i] = ui_lbl(pg->scr, &lv_font_montserrat_16, C_FAINT, ic[i], LV_ALIGN_TOP_MID, (i * 2 - 3) * 22, 332);
+
     pg->refresh = home_refresh;
+    pg->confirm = home_open_assist;
 }
+
 
 /* ------------------------------------------------------------------ */
 /* MARKET                                                              */
@@ -522,6 +714,7 @@ static void build_market(void)
     m_src = ui_lbl(pg->scr, &lv_font_montserrat_12, lv_color_hex(0x4A5568), "", LV_ALIGN_TOP_MID, 0, 342);
     pg->refresh = market_refresh;
     pg->confirm = market_confirm;
+    pg->tap = market_confirm;           /* tap = next coin */
 }
 
 /* ------------------------------------------------------------------ */
@@ -625,6 +818,7 @@ static void build_assist(void)
     lv_obj_center(mic);
 
     a_spin = lv_spinner_create(pg->scr, 1200, 70);
+    lv_obj_clear_flag(a_spin, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(a_spin, 148, 148);
     lv_obj_align(a_spin, LV_ALIGN_TOP_MID, 0, 60);
     lv_obj_set_style_arc_width(a_spin, 5, LV_PART_MAIN);
@@ -672,6 +866,7 @@ static void build_assist(void)
 
     pg->refresh = assist_refresh;
     pg->confirm = assist_confirm;
+    pg->tap = assist_confirm;
 }
 
 /* ------------------------------------------------------------------ */
@@ -819,6 +1014,7 @@ static void build_journal(void)
     j_hint = ui_lbl(pg->scr, &lv_font_montserrat_12, C_DIM, "", LV_ALIGN_TOP_MID, 0, 324);
     pg->refresh = journal_refresh;
     pg->confirm = journal_confirm;
+    pg->tap = journal_confirm;
 }
 
 /* ------------------------------------------------------------------ */
@@ -962,106 +1158,114 @@ static void build_notes(void)
 /* ------------------------------------------------------------------ */
 
 #define PIN_LEN 4
-static lv_obj_t *s_title, *s_sub, *s_digit, *s_dots[PIN_LEN];
+static lv_obj_t *s_title, *s_sub, *s_dots[PIN_LEN];
+static ui_kb_t *s_kb;
 static char pin_buf[PIN_LEN + 1], pin_first[PIN_LEN + 1];
-static int pin_n, pin_digit;
+static int pin_n;
 static bool pin_confirming;
+static const char *pin_msg;           /* one-off message under the dots */
 
 static void pin_draw(void)
 {
     for (int i = 0; i < PIN_LEN; i++) {
         bool on = i < pin_n;
-        lv_obj_set_style_bg_color(s_dots[i], on ? C_BLUE : C_BG, 0);
+        ui_bg_color(s_dots[i], on ? C_BLUE : C_BG);
         lv_obj_set_style_border_color(s_dots[i], on ? C_BLUE : lv_color_hex(0x5B6B8C), 0);
     }
-    lv_label_set_text_fmt(s_digit, "< %d >", pin_digit);
-    if (M->pin_set) {
-        lv_label_set_text(s_title, M->locked ? "Locked" : "Security Mode");
-        lv_label_set_text(s_sub, "Enter PIN");
-    } else {
-        lv_label_set_text(s_title, "Create PIN");
-        lv_label_set_text(s_sub, pin_confirming ? "Repeat the PIN" : "Choose 4 digits");
-    }
+    if (M->pin_set) ui_set_text(s_title, M->locked ? "Locked - enter PIN" : "Enter PIN");
+    else ui_set_text(s_title, pin_confirming ? "Repeat the PIN" : "Create a 4-digit PIN");
+    ui_set_text(s_sub, pin_msg ? pin_msg : "");
 }
 
 static void pin_reset(void)
 {
     pin_n = 0;
-    pin_digit = 0;
     memset(pin_buf, 0, sizeof pin_buf);
     pin_draw();
 }
 
-static void security_refresh(void)
+static void pin_enter(void)
 {
-    pin_draw();
+    pin_msg = NULL;
+    pin_confirming = false;
+    ui_kb_reset(s_kb);
+    pin_reset();
 }
 
-static bool security_rotate(int dir)
+static void pin_done(void)
 {
-    pin_digit = (pin_digit + dir + 10) % 10;
-    pin_draw();
-    return true;
-}
-
-static void security_confirm(void)
-{
-    pin_buf[pin_n++] = (char)('0' + pin_digit);
-    pin_digit = 0;
-    if (pin_n < PIN_LEN) { pin_draw(); return; }
     pin_buf[PIN_LEN] = 0;
     if (M->pin_set) {
         if (A->pin_verify && A->pin_verify(pin_buf)) {
             M->locked = false;
+            pin_msg = NULL;
             pin_reset();
             ui_goto(MX_PAGE_HOME, true);
             return;
         }
-        lv_label_set_text(s_sub, "Wrong PIN");
+        pin_msg = "Wrong PIN, try again";
         pin_reset();
-        lv_label_set_text(s_sub, "Wrong PIN, try again");
         return;
     }
     if (!pin_confirming) {
         memcpy(pin_first, pin_buf, sizeof pin_first);
         pin_confirming = true;
+        pin_msg = NULL;
         pin_reset();
         return;
     }
+    pin_confirming = false;
     if (!strcmp(pin_first, pin_buf) && A->pin_store && A->pin_store(pin_buf)) {
         M->pin_set = true;
         M->locked = false;
-        pin_confirming = false;
+        pin_msg = NULL;
         pin_reset();
         ui_goto(MX_PAGE_HOME, true);
         return;
     }
-    pin_confirming = false;
+    pin_msg = "PINs differ, start again";
     pin_reset();
-    lv_label_set_text(s_sub, "PINs differ, start again");
 }
+
+static void pin_key(int kind, const char *txt)
+{
+    if (kind == UI_KEY_CHAR && txt && txt[0] >= '0' && txt[0] <= '9') {
+        if (pin_n < PIN_LEN) pin_buf[pin_n++] = txt[0];
+        pin_msg = NULL;
+        if (pin_n == PIN_LEN) { pin_done(); return; }
+    } else if (kind == UI_KEY_BKSP) {
+        if (pin_n > 0) pin_buf[--pin_n] = 0;
+        else if (!M->locked) { ui_back(); return; }    /* empty field: backspace leaves */
+    } else if (kind == UI_KEY_OK) {
+        if (pin_n == PIN_LEN) { pin_done(); return; }
+        if (pin_n == 0 && !M->locked) { ui_back(); return; }
+    }
+    pin_draw();
+}
+
+static void security_refresh(void) { pin_draw(); }
+static bool security_rotate(int dir) { return ui_kb_rotate(s_kb, dir); }
+static void security_confirm(void) { ui_kb_confirm(s_kb); }
 
 static void build_security(void)
 {
     page_t *pg = &P[MX_PAGE_SECURITY];
     pg->scr = ui_scr();
     ui_chrome(pg, true);
-    lv_obj_t *sh = lv_img_create(pg->scr);
-    lv_img_set_src(sh, &mx_img_shield);
-    lv_obj_align(sh, LV_ALIGN_TOP_MID, 0, 74);
-    s_title = ui_lbl(pg->scr, &lv_font_montserrat_20, C_TEXT, "", LV_ALIGN_TOP_MID, 0, 214);
-    s_sub = ui_lbl(pg->scr, &lv_font_montserrat_14, C_DIM, "", LV_ALIGN_TOP_MID, 0, 244);
+    s_title = ui_lbl(pg->scr, &lv_font_montserrat_16, C_TEXT, "", LV_ALIGN_TOP_MID, 0, 46);
     for (int i = 0; i < PIN_LEN; i++) {
-        s_dots[i] = ui_circle(pg->scr, 16, C_BG);
+        s_dots[i] = ui_circle(pg->scr, 14, C_BG);
         lv_obj_set_style_border_width(s_dots[i], 2, 0);
-        lv_obj_align(s_dots[i], LV_ALIGN_TOP_MID, (i - (PIN_LEN - 1) / 2.0f) * 30, 278);
+        lv_obj_align(s_dots[i], LV_ALIGN_TOP_MID, (int)((i - (PIN_LEN - 1) / 2.0f) * 28), 72);
     }
-    s_digit = ui_lbl(pg->scr, &lv_font_montserrat_28, C_TEXT, "< 0 >", LV_ALIGN_TOP_MID, 0, 312);
+    s_kb = ui_kb_create(pg->scr, UI_KB_PIN, 94, pin_key);
+    s_sub = ui_lbl(pg->scr, &lv_font_montserrat_14, C_RED, "", LV_ALIGN_TOP_MID, 0, 340);
     pg->refresh = security_refresh;
     pg->rotate = security_rotate;
     pg->confirm = security_confirm;
     pg->capture = true;
-    pg->enter = pin_reset;
+    pg->no_swipe = true;
+    pg->enter = pin_enter;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1072,6 +1276,19 @@ static void blank_cb(lv_event_t *e)
 {
     (void)e;
     mx_activity();            /* the app notices and lights the screen again */
+}
+
+static void alert_close(void)
+{
+    lv_obj_add_flag(alert_box, LV_OBJ_FLAG_HIDDEN);
+    if (alert_timer) { lv_timer_del(alert_timer); alert_timer = NULL; }
+}
+
+static void alert_tap_cb(lv_event_t *e)
+{
+    (void)e;
+    mx_activity();
+    alert_close();
 }
 
 static void build_overlays(void)
@@ -1100,6 +1317,7 @@ static void build_overlays(void)
 
     alert_box = ui_box(top, W, H, lv_color_hex(0x1A0507), 0);
     lv_obj_add_flag(alert_box, LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(alert_box, alert_tap_cb, LV_EVENT_CLICKED, NULL);
     alert_ic = ui_lbl(alert_box, &lv_font_montserrat_40, C_RED, LV_SYMBOL_WARNING, LV_ALIGN_TOP_MID, 0, 62);
     alert_t = ui_lbl(alert_box, &lv_font_montserrat_20, C_TEXT, "", LV_ALIGN_TOP_MID, 0, 126);
     alert_s = ui_lbl(alert_box, &lv_font_montserrat_20, C_RED, "", LV_ALIGN_TOP_MID, 0, 162);
@@ -1107,11 +1325,27 @@ static void build_overlays(void)
     lv_obj_set_style_text_align(alert_s, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(alert_s, LV_LABEL_LONG_DOT);
     alert_p = ui_lbl(alert_box, &lv_font_montserrat_28, C_TEXT, "", LV_ALIGN_TOP_MID, 0, 214);
+    ui_lbl(alert_box, &lv_font_montserrat_12, C_DIM, "Tap to close", LV_ALIGN_TOP_MID, 0, 300);
 
     /* screen timeout: a black sheet that swallows the wake-up touch */
     blank_box = ui_box(top, W, H, C_BG, 0);
     lv_obj_add_flag(blank_box, LV_OBJ_FLAG_HIDDEN | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(blank_box, blank_cb, LV_EVENT_PRESSED, NULL);
+}
+
+static bool blanked(void)
+{
+    return blank_box && !lv_obj_has_flag(blank_box, LV_OBJ_FLAG_HIDDEN);
+}
+
+static bool alert_up(void)
+{
+    return alert_box && !lv_obj_has_flag(alert_box, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool ui_overlay_open(void)
+{
+    return ui_shell_open() || alert_up();
 }
 
 void ui_screen_blank(bool blank)
@@ -1169,6 +1403,10 @@ void ui_set_hold(int ms)
 /* core                                                                */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* core                                                                */
+/* ------------------------------------------------------------------ */
+
 void ui_ring_color(uint32_t rgb)
 {
     if (!ring_arc) return;
@@ -1188,15 +1426,20 @@ static void chrome_refresh(void)
     if (pg->time) {
         char t[16];
         time_str(t, sizeof t);
-        ui_set_text(pg->time, t);
+        if (strcmp(lv_label_get_text(pg->time), t)) {
+            lv_label_set_text(pg->time, t);
+            ui_chrome_place(pg);
+        }
     }
-    batt_apply(&pg->batt);
+    ui_batt_apply(&pg->batt);
 }
 
 void ui_refresh(void)
 {
     chrome_refresh();
     if (P[cur].refresh) P[cur].refresh();
+    if (ui_list_of[cur]) ui_list_layout(ui_list_of[cur]);
+    ui_shell_refresh();
 }
 
 void ui_register_hidden(mx_page_t page, mx_page_t parent)
@@ -1206,57 +1449,97 @@ void ui_register_hidden(mx_page_t page, mx_page_t parent)
     P[page].parent = parent;
 }
 
-void ui_goto(mx_page_t page, bool animate)
+/* dir > 0 slides the new page in from the right, < 0 from the left, 0 = cut */
+static void nav_to(mx_page_t page, int dir)
 {
     if (page < 0 || page >= MX_PAGE_COUNT || !P[page].scr) return;
+    ui_shell_close();
     if (page == cur) {
         ui_refresh();
         return;
     }
-    bool fwd = page >= cur;
     if (P[cur].leave) P[cur].leave();
     cur = page;
     P[page].capture = P[page].hidden;
+    if (ui_list_of[page]) ui_list_of[page]->sig_ok = false;
     dots_update();
     if (P[page].enter) P[page].enter();
     ui_refresh();
-    lv_scr_load_anim(P[page].scr, animate ? (fwd ? LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT) : LV_SCR_LOAD_ANIM_NONE,
-                     animate ? 220 : 0, 0, false);
+    lv_scr_load_anim_t a = dir > 0 ? LV_SCR_LOAD_ANIM_MOVE_LEFT : dir < 0 ? LV_SCR_LOAD_ANIM_MOVE_RIGHT : LV_SCR_LOAD_ANIM_NONE;
+    lv_scr_load_anim(P[page].scr, a, dir ? 200 : 0, 0, false);
+}
+
+void ui_goto(mx_page_t page, bool animate)
+{
+    if (page < 0 || page >= MX_PAGE_COUNT) return;
+    /* a sub-page opens forwards; going back to its parent slides backwards */
+    int dir = !animate ? 0 : (P[cur].hidden && page == P[cur].parent) ? -1 : page >= cur ? 1 : -1;
+    nav_to(page, dir);
 }
 
 void ui_back(void)
 {
-    if (P[cur].hidden) ui_goto(P[cur].parent, true);
+    if (P[cur].hidden) nav_to(P[cur].parent, -1);
 }
 
 static void goto_dir(int dir)
 {
-    int n = (cur >= MX_PAGE_CAROUSEL_N) ? MX_PAGE_SETTINGS : ((int)cur + dir + MX_PAGE_CAROUSEL_N) % MX_PAGE_CAROUSEL_N;
-    ui_goto((mx_page_t)n, true);
+    int n = ((int)cur + dir + MX_PAGE_CAROUSEL_N) % MX_PAGE_CAROUSEL_N;
+    nav_to((mx_page_t)n, dir);
 }
 
-/* A sideways swipe always changes page, even inside a list. Hidden pages
-   treat a swipe to the right as Back. */
-static void swipe_nav(int dir)
+/* Finger moved: LEFT = towards the left edge (next page), RIGHT = previous
+   page or Back, BOTTOM = pull the quick panel down, TOP = push the app grid up. */
+void ui_swipe(lv_dir_t d)
 {
-    if (P[cur].hidden) {
-        if (dir < 0) ui_back();
+    if (blanked() || M->locked) return;
+    if (alert_up()) { alert_close(); return; }
+    mx_activity();
+    if (ui_shell_open()) {
+        ui_shell_swipe(d);
+        ui_refresh();
         return;
     }
-    P[cur].capture = false;
-    goto_dir(dir);
+    page_t *pg = &P[cur];
+    if (pg->no_swipe && !G.on_screen) return;          /* the finger started on a key */
+    if (pg->gesture && pg->gesture(d)) { ui_refresh(); return; }
+    switch (d) {
+    case LV_DIR_LEFT:
+        if (!pg->hidden) { pg->capture = false; goto_dir(1); }
+        break;
+    case LV_DIR_RIGHT:
+        if (pg->hidden) ui_back();
+        else { pg->capture = false; goto_dir(-1); }
+        break;
+    case LV_DIR_BOTTOM:
+        ui_panel_open();
+        break;
+    case LV_DIR_TOP:
+        ui_launcher_open();
+        break;
+    default:
+        break;
+    }
+    ui_refresh();
 }
 
 void ui_input(mx_input_t in)
 {
     mx_activity();
+    if (!knob_mode) {
+        knob_mode = true;                                    /* show where the knob is */
+        if (ui_list_of[cur]) ui_list_of[cur]->sig_ok = false;
+    }
     /* an alert swallows the first input and just closes */
-    if (alert_box && !lv_obj_has_flag(alert_box, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_add_flag(alert_box, LV_OBJ_FLAG_HIDDEN);
-        if (alert_timer) { lv_timer_del(alert_timer); alert_timer = NULL; }
+    if (alert_up()) { alert_close(); return; }
+    if (M->locked && cur != MX_PAGE_SECURITY) nav_to(MX_PAGE_SECURITY, 0);
+    if (in == MX_IN_HOME) {
+        ui_shell_close();
+        if (!M->locked) ui_goto(MX_PAGE_HOME, true);
+        ui_refresh();
         return;
     }
-    if (M->locked && cur != MX_PAGE_SECURITY) ui_goto(MX_PAGE_SECURITY, false);
+    if (ui_shell_input(in)) { ui_refresh(); return; }
     page_t *pg = &P[cur];
     switch (in) {
     case MX_IN_LEFT:
@@ -1269,10 +1552,8 @@ void ui_input(mx_input_t in)
     }
     case MX_IN_CONFIRM:
         if (pg->confirm) pg->confirm();
-        else if (cur == MX_PAGE_HOME) ui_goto(MX_PAGE_ASSIST, true);
         break;
-    case MX_IN_HOME:
-        if (!M->locked) ui_goto(MX_PAGE_HOME, true);
+    default:
         break;
     }
     ui_refresh();
@@ -1293,11 +1574,13 @@ void ui_init(mx_model_t *model, const mx_actions_t *actions)
     ui_build_camera_pages();
     ui_build_settings_pages();
     for (int i = 0; i < MX_PAGE_CAROUSEL_N; i++) dots_build(P[i].scr, page_dots[i]);
+    ui_shell_build();
     build_overlays();
     ui_register_hidden(MX_PAGE_SECURITY, MX_PAGE_SETTINGS);
+    lv_timer_create(gesture_timer, 10, NULL);
     cur = MX_PAGE_HOME;
     dots_update();
     ui_refresh();
     lv_scr_load(P[MX_PAGE_HOME].scr);
-    if (M->locked) ui_goto(MX_PAGE_SECURITY, false);
+    if (M->locked) nav_to(MX_PAGE_SECURITY, 0);
 }
