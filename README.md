@@ -69,3 +69,13 @@ Worker tests: `cd worker && npm test`.
 ## Credits
 
 Built on Seeed Studio's [SenseCAP Watcher firmware SDK](https://github.com/Seeed-Studio/SenseCAP-Watcher-Firmware) (Apache-2.0) for display, touch, audio, knob and camera drivers. Signal and price logic from GeekMagic-Ultra; assistant personas from Maximus Matrix OS.
+
+## v2 highlights
+
+- **Camera**: photo and video (MJPEG AVI, no audio) saved to `/DCIM` on a FAT32 TF card. **Gallery** plays them back.
+- **Settings on the device**: Wi-Fi (on/off, scan, password), Bluetooth, brightness, screen timeout (30 s / 1 min / 2 min), date and time, display speed.
+- **Knob**: click selects, hold 2 s goes Home, hold 5 s powers off.
+- **Battery icon** with a charging bolt.
+- **Two-stage installer** (web page): identify the device, erase and install the ESP32-S3 firmware, then install the camera chip (Himax WE2) firmware.
+
+The camera chip firmware is Seeed's stock SSCMA image (Apache-2.0, from Seeed-Studio/SenseCAP-Watcher-Firmware), fetched by `tools/fetch-deps.sh` and bundled; Maximus OS does not ship its own Himax firmware. Features are untested on real hardware at the time of writing.
