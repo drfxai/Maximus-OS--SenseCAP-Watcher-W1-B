@@ -51,6 +51,9 @@ jobs:
           . $IDF_PATH/export.sh
           idf.py set-target esp32s3
           idf.py build
+          # static RAM use, to compare releases when the screen stays dark
+          idf.py size
+          idf.py size-components | head -45
       - name: Merge into one image (bootloader + partition table + app)
         shell: bash
         working-directory: firmware/build
