@@ -13,6 +13,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "mx_app.h"
+#include "mx_camera.h"
+#include "mx_himax.h"
 #include "mx_net.h"
 
 static const char *TAG = "cfg";
@@ -27,6 +30,9 @@ static void defaults(void)
     strlcpy(C.symbols, "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT", sizeof C.symbols);
     C.brightness = 80;
     C.volume = 70;
+    C.wifi_enabled = true;
+    C.auto_time = true;
+    C.timeout_idx = 1;
 }
 
 void mx_cfg_load(void)
@@ -49,12 +55,20 @@ void mx_cfg_load(void)
     nvs_get_u8(h, "mode", &C.mode);
     uint8_t b = 0;
     if (nvs_get_u8(h, "invert", &b) == ESP_OK) C.knob_invert = b;
+    if (nvs_get_u8(h, "wifi_on", &b) == ESP_OK) C.wifi_enabled = b;
+    if (nvs_get_u8(h, "bt_on", &b) == ESP_OK) C.bt_enabled = b;
+    if (nvs_get_u8(h, "auto_time", &b) == ESP_OK) C.auto_time = b;
+    if (nvs_get_u8(h, "cam_video", &b) == ESP_OK) C.cam_video = b;
+    nvs_get_u8(h, "timeout", &C.timeout_idx);
+    nvs_get_u8(h, "disp_speed", &C.disp_speed);
     n = sizeof C.pin_hash;
     if (nvs_get_blob(h, "pin", C.pin_hash, &n) == ESP_OK && n == sizeof C.pin_hash) C.pin_set = true;
     nvs_close(h);
     if (C.brightness < 10) C.brightness = 10;
     if (C.brightness > 100) C.brightness = 100;
     if (C.volume > 100) C.volume = 100;
+    if (C.timeout_idx > 2) C.timeout_idx = 1;
+    if (C.disp_speed > 1) C.disp_speed = 0;
 }
 
 void mx_cfg_save(void)
@@ -72,6 +86,12 @@ void mx_cfg_save(void)
     nvs_set_u8(h, "volume", C.volume);
     nvs_set_u8(h, "mode", C.mode);
     nvs_set_u8(h, "invert", C.knob_invert);
+    nvs_set_u8(h, "wifi_on", C.wifi_enabled);
+    nvs_set_u8(h, "bt_on", C.bt_enabled);
+    nvs_set_u8(h, "auto_time", C.auto_time);
+    nvs_set_u8(h, "cam_video", C.cam_video);
+    nvs_set_u8(h, "timeout", C.timeout_idx);
+    nvs_set_u8(h, "disp_speed", C.disp_speed);
     if (C.pin_set) nvs_set_blob(h, "pin", C.pin_hash, sizeof C.pin_hash);
     else nvs_erase_key(h, "pin");
     nvs_commit(h);
@@ -173,6 +193,17 @@ static void handle_line(char *line)
         mx_cfg_save();
         printf("MAXIMUS_OK\n");
         mx_net_reconfigure();
+    } else if (strncmp(line, "MAXIMUS_HIMAX_INFO", 18) == 0) {
+        size_t bytes = 0;
+        bool have = mx_himax_image_present(&bytes);
+        char ver[24] = "";
+        mx_himax_version(ver, sizeof ver);
+        printf("MAXIMUS_HIMAX {\"image\":%s,\"bytes\":%u,\"ready\":%s,\"fw\":\"%s\"}\n", have ? "true" : "false", (unsigned)bytes,
+               mx_camera_ready() ? "true" : "false", ver);
+    } else if (strncmp(line, "MAXIMUS_HIMAX_FLASH", 19) == 0) {
+        printf("MAXIMUS_HIMAX_START\n");
+        fflush(stdout);
+        mx_app_chip_install(true);
     } else if (strncmp(line, "MAXIMUS_FACTORY_RESET", 21) == 0) {
         nvs_flash_erase();
         printf("MAXIMUS_OK\n");
@@ -204,6 +235,6 @@ static void console_task(void *arg)
 
 void mx_console_start(void)
 {
-    xTaskCreate(console_task, "mx_console", 6144, NULL, 3, NULL);
+    xTaskCreate(console_task, "mx_console", 10240, NULL, 3, NULL);
     ESP_LOGI(TAG, "serial console ready");
 }

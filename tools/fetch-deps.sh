@@ -32,4 +32,18 @@ printf 'version: "8.4.0"\ndescription: LVGL\n' > "$dest/components/lvgl/idf_comp
 # members so every branch compiles.
 hdr="$dest/components/sscma_client/include/sscma_client_types.h"
 sed -i -e '/^#ifdef CONFIG_SSCMA_\(PROCESS\|MONITOR\)_TASK_STACK_ALLOC_EXTERNAL$/{N;N;N;s/^#ifdef[^\n]*\n\(.*\)\n\(.*\)\n#endif$/\1\n\2/}' "$hdr"
+# BSP tweaks (idempotent): a runtime pixel clock hook so Maximus can offer a
+# display-speed setting, and a 20 kHz backlight so cameras do not see banding.
+bsp="$dest/components/sensecap-watcher/sensecap-watcher.c"
+if ! grep -q bsp_lcd_pclk_hz "$bsp"; then
+    sed -i -e 's/^static const char \*TAG = "BSP";/static const char *TAG = "BSP";\n__attribute__((weak)) uint32_t bsp_lcd_pclk_hz(void) { return DRV_LCD_PIXEL_CLK_HZ; }/' \
+           -e 's/\.pclk_hz = DRV_LCD_PIXEL_CLK_HZ,/.pclk_hz = bsp_lcd_pclk_hz(),/' \
+           -e 's/\.freq_hz = 5000,/.freq_hz = 20000,/' "$bsp"
+    grep -q 'pclk_hz = bsp_lcd_pclk_hz' "$bsp" || { echo "BSP patch did not apply" >&2; exit 1; }
+fi
+
+# The camera chip (Himax WE2) firmware that ships with Seeed's repo. Maximus
+# stores it in the flash image and can (re)install it on request.
+mkdir -p "$root/firmware/spiffs"
+cp "$dest/examples/sscma_client_ota/spiffs/firmware.img" "$root/firmware/spiffs/himax.img"
 echo "deps ready in $dest"

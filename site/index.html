@@ -75,16 +75,24 @@ a { color: var(--blue); }
   </div>
 
   <section class="card" id="c1">
-    <h2><span class="num">1</span> Install the firmware</h2>
-    <p class="sub">Plug the Watcher into your computer with a USB-C <i>data</i> cable, then press the button and pick the Watcher's serial port. This writes the bootloader, partition table and Maximus OS in one go, so it also works on a completely erased device. The device is fully erased first, then the new firmware is written. Nothing to download by hand: the firmware is fetched automatically.</p>
+    <h2><span class="num">1</span> Install Maximus OS (two stages)</h2>
+    <p class="sub">Plug the Watcher into your computer with a USB-C <i>data</i> cable. The installer works in three short steps: it identifies the device, fully erases it and installs the ESP32-S3 firmware, then installs the firmware of the camera / AI graphics chip (Himax WE2). Nothing to download by hand.</p>
     <p class="note" id="fwstatus">Checking the firmware file...</p>
-    <div class="hero-btn">
-      <esp-web-install-button manifest="manifest.json" erase-first>
-        <button slot="activate">Install Maximus OS</button>
-        <span slot="unsupported">Your browser can't flash over USB. Use Chrome or Edge on a computer.</span>
-        <span slot="not-allowed">Web Serial needs HTTPS. Open this page from its https:// address.</span>
-      </esp-web-install-button>
-    </div>
+    <ol class="steps" style="padding-left:20px;line-height:1.7">
+      <li><b>Identify the device.</b> <button class="secondary" id="ident">Identify device</button> <span class="note" id="identout">Not checked yet.</span></li>
+      <li><b>Erase and install the ESP32-S3 firmware.</b>
+        <div class="hero-btn">
+          <esp-web-install-button manifest="manifest.json" erase-first>
+            <button slot="activate">Erase and install Maximus OS</button>
+            <span slot="unsupported">Your browser can't flash over USB. Use Chrome or Edge on a computer.</span>
+            <span slot="not-allowed">Web Serial needs HTTPS. Open this page from its https:// address.</span>
+          </esp-web-install-button>
+        </div>
+      </li>
+      <li><b>Install the camera chip firmware.</b> Wait until the watch has booted, then: <button id="himaxgo">Install camera chip firmware</button>
+        <div style="background:#223;border-radius:6px;height:10px;margin:8px 0;overflow:hidden"><div id="himaxbar" style="height:100%;width:0;background:#4da3ff"></div></div>
+        <span class="note" id="himaxout">Not started.</span></li>
+    </ol>
     <details>
       <summary>Nothing shows up in the port list?</summary>
       <ol>
@@ -316,6 +324,8 @@ class Link {
   }
   onLine(line) {
     if (!line.startsWith("MAXIMUS_")) return;
+    liveLog("device", line);
+    if (this.tap) this.tap(line);
     for (const w of [...this.waiters]) if (w.test(line)) { this.waiters.splice(this.waiters.indexOf(w), 1); w.resolve(line); }
   }
   send(text) { return this.writer.write(new TextEncoder().encode(text + "\n")); }
@@ -340,6 +350,66 @@ async function hello(link) {
   }
   throw new Error("The watch did not answer. Is Maximus OS installed and running?");
 }
+
+
+/* ---- two-stage install helpers ---- */
+async function openLink() {
+  const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }] }).catch(() => navigator.serial.requestPort());
+  const link = new Link(port);
+  await link.open();
+  return link;
+}
+$("ident").onclick = async () => {
+  const out = $("identout");
+  if (!hasSerial) { out.textContent = "Web Serial is not available."; return; }
+  let link;
+  try { link = await openLink(); } catch (e) { out.textContent = "Could not open the port: " + e.message; liveLog("error", e.message); return; }
+  const info = link.port.getInfo ? link.port.getInfo() : {};
+  const usb = info.usbVendorId ? "USB " + info.usbVendorId.toString(16) + ":" + (info.usbProductId || 0).toString(16) : "unknown USB id";
+  liveLog("page", "identify: " + usb);
+  out.textContent = "Found a device (" + usb + "), asking it who it is...";
+  try {
+    const r = await Promise.race([hello(link), new Promise((_, rej) => setTimeout(() => rej(new Error("no answer")), 6000))]);
+    out.textContent = "Maximus OS is already installed (" + r.replace("MAXIMUS_READY", "").trim() + "). Step 2 will still erase it first.";
+  } catch (_) {
+    out.textContent = (info.usbVendorId === 0x303a ? "ESP32-S3 device detected" : "Device detected") + ", no Maximus OS running yet. Go on with step 2.";
+  }
+  await link.close();
+};
+btn.addEventListener("state-changed", (e) => {
+  const st = e.detail && e.detail.state;
+  liveLog("page", "installer state: " + st);
+  if (st === "finished") $("himaxout").textContent = "ESP32-S3 firmware installed. Now press the button above to install the camera chip firmware.";
+});
+$("himaxgo").onclick = async () => {
+  const out = $("himaxout"), bar = $("himaxbar");
+  if (!hasSerial) { out.textContent = "Web Serial is not available."; return; }
+  let link;
+  try { link = await openLink(); } catch (e) { out.textContent = "Could not open the port: " + e.message; return; }
+  try {
+    out.textContent = "Waiting for the watch to boot...";
+    await hello(link);
+    await link.send("MAXIMUS_HIMAX_INFO");
+    try { const i = await link.expect("MAXIMUS_HIMAX", 8000); liveLog("page", "chip: " + i); } catch (e) { liveLog("page", "chip info: " + e.message); }
+    let done = false;
+    link.tap = (l) => {
+      const m = l.match(/^MAXIMUS_HIMAX_PROGRESS\s+(\d+)/);
+      if (m) { bar.style.width = m[1] + "%"; out.textContent = "Installing camera chip firmware: " + m[1] + "%. Do not unplug."; }
+      if (l.startsWith("MAXIMUS_HIMAX_DONE")) { done = true; bar.style.width = "100%"; out.textContent = "Camera chip firmware installed. The watch is restarting. All done."; }
+    };
+    const fin = new Promise((res, rej) => {
+      const prev = link.tap;
+      link.tap = (l) => { prev(l); if (l.startsWith("MAXIMUS_HIMAX_DONE")) res(); if (l.startsWith("MAXIMUS_ERR")) rej(new Error(l)); };
+    });
+    out.textContent = "Starting...";
+    await link.send("MAXIMUS_HIMAX_FLASH");
+    await Promise.race([fin, new Promise((_, rej) => setTimeout(() => rej(new Error("timed out after 5 minutes")), 300000))]);
+  } catch (e) {
+    out.textContent = "Camera chip install failed: " + e.message + ". Copy the live log below and send it to me.";
+    liveLog("error", e.message);
+  }
+  await link.close();
+};
 
 function normSymbols(s) {
   return s.split(/[\s,;]+/).filter(Boolean).slice(0, 4).map((x) => {

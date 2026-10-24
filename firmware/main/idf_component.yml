@@ -6,3 +6,5 @@ dependencies:
     override_path: "../deps/seeed/components/esp_io_expander_pca95xx_16bit"
   sscma_client:
     override_path: "../deps/seeed/components/sscma_client"
+  esp_jpeg_simd:
+    override_path: "../deps/seeed/components/esp_jpeg_simd"

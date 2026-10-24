@@ -26,6 +26,7 @@ static char s_ip[16];
 static esp_netif_t *s_netif;
 static int s_retry;
 static esp_timer_handle_t s_retry_timer;
+static bool s_enabled, s_connecting, s_failed;
 
 static void retry_cb(void *arg)
 {
@@ -41,11 +42,21 @@ void mx_net_apply_tz(void)
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        if (mx_cfg()->ssid[0]) esp_wifi_connect();
+        if (mx_cfg()->ssid[0]) {
+            s_connecting = true;
+            esp_wifi_connect();
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
         s_wifi = false;
         s_ip[0] = 0;
-        if (mx_cfg()->ssid[0]) {
+        if (d->reason == WIFI_REASON_ASSOC_LEAVE) return;            /* we asked for it */
+        if (d->reason == WIFI_REASON_AUTH_FAIL || d->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+            d->reason == WIFI_REASON_HANDSHAKE_TIMEOUT || d->reason == WIFI_REASON_NO_AP_FOUND) {
+            s_failed = true;
+        }
+        s_connecting = !s_failed;
+        if (mx_cfg()->ssid[0] && s_enabled) {
             /* back off to 30 s so a wrong password does not hammer the AP */
             int delay = s_retry < 5 ? 1000 * (1 << s_retry) : 30000;
             s_retry++;
@@ -56,6 +67,8 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         snprintf(s_ip, sizeof s_ip, IPSTR, IP2STR(&e->ip_info.ip));
         s_wifi = true;
+        s_failed = false;
+        s_connecting = false;
         s_retry = 0;
         ESP_LOGI(TAG, "got ip %s", s_ip);
     }
@@ -85,15 +98,97 @@ void mx_net_start(void)
     strlcpy((char *)wc.sta.password, mx_cfg()->pass, sizeof wc.sta.password);
     wc.sta.threshold.authmode = mx_cfg()->pass[0] ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    s_enabled = mx_cfg()->wifi_enabled;
+    if (s_enabled) ESP_ERROR_CHECK(esp_wifi_start());
 
     mx_net_apply_tz();
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_setservername(1, "time.cloudflare.com");
     esp_sntp_set_time_sync_notification_cb(sntp_cb);
-    esp_sntp_init();
+    if (mx_cfg()->auto_time) esp_sntp_init();
     s_started = true;
+}
+
+void mx_net_set_auto_time(bool on)
+{
+    if (on && !esp_sntp_enabled()) esp_sntp_init();
+    else if (!on && esp_sntp_enabled()) esp_sntp_stop();
+}
+
+bool mx_wifi_enabled(void) { return s_enabled; }
+
+void mx_wifi_enable(bool on)
+{
+    mx_cfg()->wifi_enabled = on;
+    mx_cfg_save();
+    if (!s_started || on == s_enabled) return;
+    s_enabled = on;
+    esp_timer_stop(s_retry_timer);
+    s_wifi = false;
+    s_ip[0] = 0;
+    s_connecting = s_failed = false;
+    if (on) {
+        s_retry = 0;
+        esp_wifi_start();
+    } else {
+        esp_wifi_disconnect();
+        esp_wifi_stop();
+    }
+}
+
+int mx_wifi_scan(mx_ap_t *out, int max)
+{
+    if (!s_enabled || max <= 0) return 0;
+    wifi_scan_config_t sc = { 0 };
+    sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    sc.scan_time.active.min = 80;
+    sc.scan_time.active.max = 160;
+    if (esp_wifi_scan_start(&sc, true) != ESP_OK) return 0;
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    uint16_t cap = n > 24 ? 24 : n;
+    if (!cap) return 0;
+    wifi_ap_record_t *recs = calloc(cap, sizeof *recs);
+    if (!recs) return 0;
+    esp_wifi_scan_get_ap_records(&cap, recs);
+    int k = 0;
+    for (int i = 0; i < cap && k < max; i++) {            /* records come strongest first */
+        const char *ss = (const char *)recs[i].ssid;
+        if (!ss[0]) continue;
+        bool dup = false;
+        for (int j = 0; j < k; j++) if (!strcmp(out[j].ssid, ss)) dup = true;
+        if (dup) continue;
+        strlcpy(out[k].ssid, ss, sizeof out[k].ssid);
+        out[k].rssi = recs[i].rssi;
+        out[k].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+        k++;
+    }
+    free(recs);
+    return k;
+}
+
+void mx_wifi_join(const char *ssid, const char *pass)
+{
+    mx_cfg_t *c = mx_cfg();
+    strlcpy(c->ssid, ssid, sizeof c->ssid);
+    strlcpy(c->pass, pass ? pass : "", sizeof c->pass);
+    c->wifi_enabled = true;
+    mx_cfg_save();
+    if (!s_enabled) mx_wifi_enable(true);
+    s_failed = false;
+    s_connecting = true;
+    mx_net_reconfigure();
+}
+
+void mx_wifi_forget(void)
+{
+    mx_cfg_t *c = mx_cfg();
+    c->ssid[0] = 0;
+    c->pass[0] = 0;
+    mx_cfg_save();
+    s_failed = s_connecting = false;
+    mx_net_reconfigure();
 }
 
 void mx_net_reconfigure(void)
@@ -104,11 +199,16 @@ void mx_net_reconfigure(void)
     strlcpy((char *)wc.sta.password, mx_cfg()->pass, sizeof wc.sta.password);
     wc.sta.threshold.authmode = mx_cfg()->pass[0] ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
     esp_timer_stop(s_retry_timer);
-    esp_wifi_disconnect();
+    if (s_enabled) esp_wifi_disconnect();
     esp_wifi_set_config(WIFI_IF_STA, &wc);
     mx_net_apply_tz();
     s_retry = 0;
-    if (wc.sta.ssid[0]) esp_wifi_connect();
+    if (s_enabled && wc.sta.ssid[0]) {
+        s_connecting = true;
+        esp_wifi_connect();
+    } else {
+        s_connecting = false;
+    }
 }
 
 void mx_net_status(mx_net_status_t *out)
@@ -117,6 +217,12 @@ void mx_net_status(mx_net_status_t *out)
     out->relay_ok = s_relay_ok;
     out->time_valid = time(NULL) > 1700000000;
     strlcpy(out->ip, s_ip, sizeof out->ip);
+    strlcpy(out->ssid, mx_cfg()->ssid, sizeof out->ssid);
+    if (!s_enabled) out->state = MX_WIFI_OFF;
+    else if (s_wifi) out->state = MX_WIFI_CONNECTED;
+    else if (!mx_cfg()->ssid[0]) out->state = MX_WIFI_IDLE;
+    else if (s_failed) out->state = MX_WIFI_FAILED;
+    else out->state = MX_WIFI_CONNECTING;
 }
 
 void mx_net_set_relay_ok(bool ok) { s_relay_ok = ok; }
