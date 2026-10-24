@@ -254,7 +254,7 @@ int main(int argc, char **argv)
 
     /* Settings > Restart asks first */
     ui_goto(MX_PAGE_SETTINGS, false);
-    ui_input(MX_IN_CONFIRM); for (int i = 0; i < 9; i++) ui_input(MX_IN_RIGHT); SHOT("42_settings_knob_on_restart");
+    ui_input(MX_IN_CONFIRM); for (int i = 0; i < 10; i++) ui_input(MX_IN_RIGHT); SHOT("42_settings_knob_on_restart");
     ui_input(MX_IN_CONFIRM); SHOT("43_restart_confirm");
     ui_input(MX_IN_CONFIRM);        /* the highlight starts on Cancel */
 

@@ -36,6 +36,7 @@
 #include "mx_relay.h"
 #include "mx_rgb.h"
 #include "mx_sd.h"
+#include "mx_web.h"
 #include "ui/ui.h"
 
 static const char *TAG = "app";
@@ -45,7 +46,7 @@ static const char *TAG = "app";
 typedef enum {
     CMD_LISTEN, CMD_JOURNAL, CMD_SNAPSHOT, CMD_PRICES,
     CMD_WIFI_SCAN, CMD_WIFI_JOIN, CMD_WIFI_FORGET, CMD_WIFI_ENABLE,
-    CMD_BT, CMD_CHIP, CMD_SD,
+    CMD_BT, CMD_CHIP, CMD_SD, CMD_WEB,
 } cmd_type_t;
 
 typedef struct {
@@ -168,6 +169,12 @@ static void act_disp_speed(int idx)
     mx_cfg_save();
 }
 
+static void act_draw_mode(int idx)
+{
+    mx_cfg()->draw_mode = (uint8_t)idx;
+    mx_cfg_save();
+}
+
 static void act_set_time(const struct tm *lt)
 {
     struct tm t = *lt;
@@ -216,6 +223,7 @@ static bool act_gal_delete(int i) { return mx_media_gallery_delete(i); }
 static void act_gal_close(void) { mx_media_gallery_close(); }
 static void act_chip(void) { send_cmd(CMD_CHIP); }
 static void act_sd_refresh(void) { send_cmd(CMD_SD); }
+static void act_web(bool on) { send_cmd_arg(CMD_WEB, on, NULL, NULL); }
 static void act_prices(void) { send_cmd(CMD_PRICES); }
 static void act_reboot(void) { esp_restart(); }
 
@@ -255,6 +263,7 @@ static const mx_actions_t ACTIONS = {
     .bt_set_enabled = act_bt,
     .set_timeout = act_timeout,
     .set_disp_speed = act_disp_speed,
+    .set_draw_mode = act_draw_mode,
     .set_bl_freq = act_bl_freq,
     .set_time = act_set_time,
     .set_tz = act_set_tz,
@@ -270,6 +279,7 @@ static const mx_actions_t ACTIONS = {
     .gallery_close = act_gal_close,
     .chip_reinstall = act_chip,
     .sd_refresh = act_sd_refresh,
+    .web_set = act_web,
     .refresh_prices = act_prices,
     .reboot = act_reboot,
     .power_off = power_off,
@@ -653,6 +663,16 @@ static void app_task(void *arg)
             }
             case CMD_CHIP: mx_app_chip_install(false); break;
             case CMD_SD: last_sd = -100000; break;
+            case CMD_WEB: {
+                bool ok = mx_web_set(c.arg);
+                if (lvgl_port_lock(0)) {
+                    M.web_on = mx_web_on();
+                    M.web_failed = c.arg && !ok;
+                    mx_web_info(M.web_ssid, sizeof M.web_ssid, M.web_pass, sizeof M.web_pass);
+                    lvgl_port_unlock();
+                }
+                break;
+            }
             }
         }
         int64_t t = now_ms();
@@ -776,6 +796,9 @@ void mx_app_start(void)
     M.bl_freq = c->bl_freq;
     M.timeout_idx = c->timeout_idx;
     M.disp_speed = c->disp_speed;
+    M.draw_mode = c->draw_mode;
+    M.web_on = mx_web_on();
+    mx_web_info(M.web_ssid, sizeof M.web_ssid, M.web_pass, sizeof M.web_pass);
     M.auto_time = c->auto_time;
     M.bt_on = false;
     M.cam_video = c->cam_video;

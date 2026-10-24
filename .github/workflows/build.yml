@@ -58,6 +58,8 @@ jobs:
           . $IDF_PATH/export.sh
           mkdir -p ../../site/firmware
           esptool.py --chip esp32s3 merge_bin -o ../../site/firmware/maximus-os-full.bin @flash_args
+          # the ELF goes alongside, so a crash backtrace from the web console can be decoded
+          cp *.elf ../../site/firmware/maximus-os.elf
           ls -l ../../site/firmware
           size=$(stat -c %s ../../site/firmware/maximus-os-full.bin)
           echo "full image: $size bytes"

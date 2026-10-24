@@ -26,7 +26,8 @@ static char s_ip[16];
 static esp_netif_t *s_netif;
 static int s_retry;
 static esp_timer_handle_t s_retry_timer;
-static bool s_enabled, s_connecting, s_failed;
+static bool s_enabled, s_connecting, s_failed, s_ap_on;
+static esp_netif_t *s_ap_netif;
 
 static void retry_cb(void *arg)
 {
@@ -42,7 +43,7 @@ void mx_net_apply_tz(void)
 static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        if (mx_cfg()->ssid[0]) {
+        if (mx_cfg()->ssid[0] && s_enabled) {
             s_connecting = true;
             esp_wifi_connect();
         }
@@ -131,10 +132,37 @@ void mx_wifi_enable(bool on)
     if (on) {
         s_retry = 0;
         esp_wifi_start();
+        /* already running for the hotspot: no start event will come to connect */
+        if (s_ap_on && mx_cfg()->ssid[0]) { s_connecting = true; esp_wifi_connect(); }
     } else {
         esp_wifi_disconnect();
-        esp_wifi_stop();
+        if (!s_ap_on) esp_wifi_stop();      /* the web console's hotspot keeps the radio on */
     }
+}
+
+/* The web console's own hotspot, next to the normal connection. */
+bool mx_net_ap(bool on, const char *ssid, const char *pass)
+{
+    if (!s_started) return false;
+    if (on) {
+        if (!s_ap_netif) s_ap_netif = esp_netif_create_default_wifi_ap();
+        if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK) return false;
+        wifi_config_t ac = { 0 };
+        strlcpy((char *)ac.ap.ssid, ssid, sizeof ac.ap.ssid);
+        ac.ap.ssid_len = strlen(ssid);
+        strlcpy((char *)ac.ap.password, pass, sizeof ac.ap.password);
+        ac.ap.authmode = WIFI_AUTH_WPA2_PSK;
+        ac.ap.max_connection = 3;
+        ac.ap.channel = 6;
+        if (esp_wifi_set_config(WIFI_IF_AP, &ac) != ESP_OK) return false;
+        if (!s_enabled) esp_wifi_start();
+        s_ap_on = true;
+    } else if (s_ap_on) {
+        s_ap_on = false;
+        if (s_enabled) esp_wifi_set_mode(WIFI_MODE_STA);
+        else esp_wifi_stop();
+    }
+    return true;
 }
 
 int mx_wifi_scan(mx_ap_t *out, int max)

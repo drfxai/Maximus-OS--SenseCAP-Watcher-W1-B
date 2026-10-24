@@ -54,7 +54,7 @@ static void page_title(page_t *pg, const char *t)
 /* SETTINGS                                                            */
 /* ------------------------------------------------------------------ */
 
-enum { S_WIFI, S_BT, S_DISPLAY, S_SOUND, S_TIME, S_STORAGE, S_CHIP, S_TG, S_SEC, S_REBOOT, S_OFF, S_BACK, S_N };
+enum { S_WIFI, S_WEB, S_BT, S_DISPLAY, S_SOUND, S_TIME, S_STORAGE, S_CHIP, S_TG, S_SEC, S_REBOOT, S_OFF, S_BACK, S_N };
 static ui_list_t L_set;
 
 static const char *wifi_state_text(char *b, size_t n)
@@ -82,6 +82,9 @@ static void settings_refresh(void)
 {
     char b[48], c[48];
     ui_list_set(&L_set, S_WIFI, NULL, wifi_state_text(c, sizeof c), M->wifi_state == MX_WIFI_OFF ? "Off" : M->ssid[0] ? M->ssid : "On");
+    if (M->web_on) snprintf(b, sizeof b, "Join %s, open 192.168.4.1", M->web_ssid);
+    ui_list_set(&L_set, S_WEB, NULL, M->web_on ? b : M->web_failed ? "Could not start" : "Live log in a browser", M->web_on ? "On" : "Off");
+    ui_text_color(L_set.val[S_WEB], M->web_on ? C_GREEN : C_DIM);
     ui_list_set(&L_set, S_BT, NULL, M->bt_failed ? "Could not start" : M->bt_on ? "Visible as Maximus OS" : "Not visible", M->bt_on ? "On" : "Off");
     ui_text_color(L_set.val[S_BT], M->bt_on ? C_GREEN : C_DIM);
     snprintf(b, sizeof b, "%d%%", M->brightness);
@@ -116,6 +119,15 @@ static bool settings_rotate(int dir)
 }
 
 static void do_reboot(void) { if (A->reboot) A->reboot(); }
+static void do_web_off(void) { if (A->web_set) A->web_set(false); }
+
+static void web_info(void)
+{
+    static char msg[120];
+    snprintf(msg, sizeof msg, "Wi-Fi: %s\nPassword: %s\nThen open http://192.168.4.1%s%s", M->web_ssid, M->web_pass,
+             M->ip[0] ? "\nor http://" : "", M->ip);
+    ui_confirm("Web console", msg, "Turn off", C_RED, do_web_off);
+}
 static void do_power_off(void) { if (A->power_off) A->power_off(); }
 
 static int step_pct(int cur_v, const int *steps, int n)
@@ -131,6 +143,10 @@ static void settings_confirm(void)
     static const int vs[] = { 0, 25, 50, 75, 100 };
     switch (L_set.sel) {
     case S_WIFI: ui_goto(MX_PAGE_WIFI, true); return;
+    case S_WEB:
+        if (M->web_on) web_info();
+        else if (A->web_set) A->web_set(true);
+        break;
     case S_BT:
         if (A->bt_set_enabled) A->bt_set_enabled(!M->bt_on);
         break;
@@ -173,6 +189,7 @@ static void build_settings(void)
     L_set.parent = pg->scr;
     ui_list_of[MX_PAGE_SETTINGS] = &L_set;
     ui_list_add(&L_set, lv_color_hex(0x1E90FF), LV_SYMBOL_WIFI, "Wi-Fi", "", ui_row_click);
+    ui_list_add(&L_set, lv_color_hex(0x00A8A8), LV_SYMBOL_LIST, "Web console", "", ui_row_click);
     ui_list_add(&L_set, lv_color_hex(0x3B6FE0), LV_SYMBOL_BLUETOOTH, "Bluetooth", "", ui_row_click);
     ui_list_add(&L_set, lv_color_hex(0xF5B301), LV_SYMBOL_EYE_OPEN, "Display", "Brightness, timeout, speed", ui_row_click);
     ui_list_add(&L_set, lv_color_hex(0x7C4DFF), LV_SYMBOL_VOLUME_MAX, "Sound", "Volume", ui_row_click);
@@ -391,12 +408,13 @@ static void build_wifipass(void)
 /* DISPLAY (a form: slider and option buttons; the knob steps through)  */
 /* ------------------------------------------------------------------ */
 
-enum { D_BRIGHT, D_TIMEOUT, D_BLFREQ, D_SPEED, D_TEST, D_BACK, D_N };
-enum { G_TIMEOUT, G_BLFREQ, G_SPEED, G_N };
+enum { D_BRIGHT, D_TIMEOUT, D_BLFREQ, D_SPEED, D_DRAW, D_TEST, D_BACK, D_N };
+enum { G_TIMEOUT, G_BLFREQ, G_SPEED, G_DRAW, G_N };
 static const char *const seg_names[G_N][3] = {
     { "30 s", "1 min", "2 min" },
     { "5 kHz", "20 kHz", "40 kHz" },
     { "Normal", "Turbo", NULL },
+    { "Factory", "Fast", NULL },
 };
 static lv_obj_t *d_form, *d_item[D_N], *d_slider, *d_bri_v, *d_seg[G_N][3], *d_hint[G_N];
 static int d_sel;
@@ -404,14 +422,15 @@ static bool d_adjust;          /* knob turns the brightness */
 
 static int seg_value(int g)
 {
-    return g == G_TIMEOUT ? M->timeout_idx : g == G_BLFREQ ? M->bl_freq : M->disp_speed;
+    return g == G_TIMEOUT ? M->timeout_idx : g == G_BLFREQ ? M->bl_freq : g == G_SPEED ? M->disp_speed : M->draw_mode;
 }
 
 static void seg_set(int g, int v)
 {
     if (g == G_TIMEOUT) { M->timeout_idx = v; if (A->set_timeout) A->set_timeout(v); }
     else if (g == G_BLFREQ) { M->bl_freq = v; if (A->set_bl_freq) A->set_bl_freq(v); }
-    else { M->disp_speed = v; if (A->set_disp_speed) A->set_disp_speed(v); }
+    else if (g == G_SPEED) { M->disp_speed = v; if (A->set_disp_speed) A->set_disp_speed(v); }
+    else { M->draw_mode = v; if (A->set_draw_mode) A->set_draw_mode(v); }
 }
 
 static void seg_cb(lv_event_t *e)
@@ -465,6 +484,7 @@ static void display_refresh(void)
             ui_bg_color(d_seg[g][k], on ? C_BLUE : C_PANEL_HI);
         }
     ui_set_text(d_hint[G_SPEED], M->disp_speed ? "80 MHz pixel clock, applies after a restart" : "40 MHz pixel clock (factory)");
+    ui_set_text(d_hint[G_DRAW], M->draw_mode ? "Small buffers in fast RAM, after a restart" : "Full-frame buffers like Seeed's firmware");
     bool hl = ui_knob_mode();
     for (int i = 0; i < D_N; i++) lv_obj_set_style_border_width(d_item[i], hl && i == d_sel ? 2 : 0, 0);
 }
@@ -492,6 +512,7 @@ static void display_confirm(void)
     case D_TIMEOUT: seg_set(G_TIMEOUT, (M->timeout_idx + 1) % 3); break;
     case D_BLFREQ: seg_set(G_BLFREQ, (M->bl_freq + 1) % 3); break;
     case D_SPEED: seg_set(G_SPEED, !M->disp_speed); break;
+    case D_DRAW: seg_set(G_DRAW, !M->draw_mode); break;
     case D_TEST: ui_goto(MX_PAGE_DTEST, true); return;
     case D_BACK: ui_back(); return;
     }
@@ -539,8 +560,8 @@ static void build_display(void)
     lv_obj_add_event_cb(d_slider, bri_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(d_slider, bri_cb, LV_EVENT_RELEASED, NULL);
 
-    static const char *titles[G_N] = { "Screen off after", "Backlight frequency", "Panel speed" };
-    static const char *hints[G_N] = { "", "Higher = no bands in phone photos", "" };
+    static const char *titles[G_N] = { "Screen off after", "Backlight frequency", "Panel speed", "Drawing" };
+    static const char *hints[G_N] = { "", "Higher = no bands in phone photos", "", "" };
     for (int g = 0; g < G_N; g++) {
         bool hint = g != G_TIMEOUT;
         it = d_item[D_TIMEOUT + g] = form_item(hint ? 100 : 84);

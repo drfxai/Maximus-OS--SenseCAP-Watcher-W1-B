@@ -13,10 +13,12 @@ idf_component_register(
         "mx_jpeg.c"
         "mx_media.c"
         "mx_knob.c"
+        "mx_log.c"
         "mx_net.c"
         "mx_relay.c"
         "mx_rgb.c"
         "mx_sd.c"
+        "mx_web.c"
         "ui/ui.c"
         "ui/ui_camera.c"
         "ui/ui_settings.c"
@@ -25,7 +27,7 @@ idf_component_register(
         "ui/assets.c"
     INCLUDE_DIRS "." "ui"
     PRIV_REQUIRES sensecap-watcher esp_lvgl_port lvgl sscma_client esp_jpeg_simd bt fatfs sdmmc nvs_flash esp_wifi esp_netif esp_event esp_http_client esp-tls mbedtls json
-                  spiffs driver esp_timer esp_hw_support esp_system vfs
+                  spiffs driver esp_timer esp_hw_support esp_system vfs esp_http_server espcoredump
 )
 
 # The camera chip's firmware travels inside the flash image: everything in
