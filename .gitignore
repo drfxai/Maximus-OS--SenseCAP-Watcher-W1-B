@@ -1,0 +1,14 @@
+firmware/deps/
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars
+sim/render
+.sim-deps/
+tools/_preview/
+site/firmware/
+*.pyc
