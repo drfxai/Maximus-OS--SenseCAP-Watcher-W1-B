@@ -484,7 +484,7 @@ static void display_refresh(void)
             ui_bg_color(d_seg[g][k], on ? C_BLUE : C_PANEL_HI);
         }
     ui_set_text(d_hint[G_SPEED], M->disp_speed ? "80 MHz pixel clock, applies after a restart" : "40 MHz pixel clock (factory)");
-    ui_set_text(d_hint[G_DRAW], M->draw_mode ? "Small buffers in fast RAM, after a restart" : "Full-frame buffers like Seeed's firmware");
+    ui_set_text(d_hint[G_DRAW], M->draw_mode ? "Small buffers in fast RAM (default)" : "Test only; hold the knob at power-on to undo");
     bool hl = ui_knob_mode();
     for (int i = 0; i < D_N; i++) lv_obj_set_style_border_width(d_item[i], hl && i == d_sel ? 2 : 0, 0);
 }

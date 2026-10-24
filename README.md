@@ -106,3 +106,7 @@ The camera chip (Himax WE2) only drives the camera; it has no connection to the 
 - **Drawing mode** (Settings > Display > Drawing): *Factory* (the default) draws exactly like Seeed's firmware, into two full-frame buffers in PSRAM; *Fast* uses 32-row buffers in internal RAM. Applies after a restart. Holding the knob at power-on goes back to Factory.
 - **Web console** (Settings > Web console): the watch opens a hotspot `Maximus-XXXX` (the password is shown on the watch) and serves `http://192.168.4.1` with the status, a live log you can copy or download, the log from before the last restart, and the last crash (task, address, backtrace from the new coredump partition). On the home network the page is also at the watch's own address.
 - CI publishes the firmware ELF next to the image (`site/firmware/maximus-os.elf`) so backtraces can be decoded.
+
+## v2.3.1
+
+- Back to fast drawing by default: the factory drawing mode left the screen white after installing 2.3.0. It stays available under Settings > Display > Drawing for testing, and holding the knob while powering on returns to the fast mode.
