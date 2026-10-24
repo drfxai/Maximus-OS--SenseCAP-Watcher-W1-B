@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_memory_utils.h"
+#include "esp_cpu.h"
 
 #include "mx_app.h"
 #include "mx_camera.h"
@@ -138,8 +139,7 @@ static void save_task(void *arg)
 
 void mx_cfg_save(void)
 {
-    int here;
-    if (!esp_ptr_external_ram(&here)) {
+    if (!esp_ptr_external_ram((const void *)esp_cpu_get_sp())) {
         cfg_write();
         return;
     }
