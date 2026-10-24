@@ -13,6 +13,8 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "esp_memory_utils.h"
 
 #include "mx_app.h"
 #include "mx_camera.h"
@@ -20,6 +22,8 @@
 #include "mx_net.h"
 
 static const char *TAG = "cfg";
+static SemaphoreHandle_t s_save_go, s_save_done, s_save_lock;
+static void save_task_start(void);
 static mx_cfg_t C;
 
 mx_cfg_t *mx_cfg(void) { return &C; }
@@ -39,6 +43,7 @@ static void defaults(void)
 
 void mx_cfg_load(void)
 {
+    if (!s_save_lock) save_task_start();
     defaults();
     nvs_handle_t h;
     if (nvs_open("maximus", NVS_READONLY, &h) != ESP_OK) return;
@@ -63,6 +68,10 @@ void mx_cfg_load(void)
     if (nvs_get_u8(h, "cam_video", &b) == ESP_OK) C.cam_video = b;
     nvs_get_u8(h, "timeout", &C.timeout_idx);
     nvs_get_u8(h, "disp_speed", &C.disp_speed);
+    nvs_get_u8(h, "draw", &C.draw_mode);
+    if (nvs_get_u8(h, "web_on", &b) == ESP_OK) C.web_on = b;
+    n = sizeof C.web_pass;
+    nvs_get_str(h, "web_pass", C.web_pass, &n);
     /* v2.2 moved the backlight to 40 kHz and full brightness and the panel back
        to its normal speed; settings saved by older versions start from those */
     if (nvs_get_u8(h, "blf", &C.bl_freq) != ESP_OK) {
@@ -78,10 +87,11 @@ void mx_cfg_load(void)
     if (C.volume > 100) C.volume = 100;
     if (C.timeout_idx > 2) C.timeout_idx = 1;
     if (C.disp_speed > 1) C.disp_speed = 0;
+    if (C.draw_mode > 1) C.draw_mode = 0;
     if (C.bl_freq > 2) C.bl_freq = 2;
 }
 
-void mx_cfg_save(void)
+static void cfg_write(void)
 {
     nvs_handle_t h;
     if (nvs_open("maximus", NVS_READWRITE, &h) != ESP_OK) return;
@@ -102,11 +112,54 @@ void mx_cfg_save(void)
     nvs_set_u8(h, "cam_video", C.cam_video);
     nvs_set_u8(h, "timeout", C.timeout_idx);
     nvs_set_u8(h, "disp_speed", C.disp_speed);
+    nvs_set_u8(h, "draw", C.draw_mode);
+    nvs_set_u8(h, "web_on", C.web_on);
+    nvs_set_str(h, "web_pass", C.web_pass);
     nvs_set_u8(h, "blf", C.bl_freq);
     if (C.pin_set) nvs_set_blob(h, "pin", C.pin_hash, sizeof C.pin_hash);
     else nvs_erase_key(h, "pin");
     nvs_commit(h);
     nvs_close(h);
+}
+
+/* Writing flash turns the cache off, and a task whose stack is in PSRAM
+   (the display task is one) aborts the chip when it does that: every setting
+   changed from the screen restarted the watch and landed on Home. Such
+   callers hand the write to a small task with its stack in internal RAM. */
+
+static void save_task(void *arg)
+{
+    for (;;) {
+        xSemaphoreTake(s_save_go, portMAX_DELAY);
+        cfg_write();
+        xSemaphoreGive(s_save_done);
+    }
+}
+
+void mx_cfg_save(void)
+{
+    int here;
+    if (!esp_ptr_external_ram(&here)) {
+        cfg_write();
+        return;
+    }
+    if (!s_save_lock) {
+        ESP_LOGE(TAG, "settings not saved: no save task");
+        return;
+    }
+    xSemaphoreTake(s_save_lock, portMAX_DELAY);
+    xSemaphoreTake(s_save_done, 0);
+    xSemaphoreGive(s_save_go);
+    if (xSemaphoreTake(s_save_done, pdMS_TO_TICKS(2000)) != pdTRUE) ESP_LOGW(TAG, "settings save is slow");
+    xSemaphoreGive(s_save_lock);
+}
+
+static void save_task_start(void)
+{
+    s_save_go = xSemaphoreCreateBinary();
+    s_save_done = xSemaphoreCreateBinary();
+    s_save_lock = xSemaphoreCreateMutex();
+    xTaskCreate(save_task, "mx_save", 4096, NULL, 6, NULL);
 }
 
 bool mx_cfg_configured(void)

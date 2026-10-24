@@ -148,6 +148,9 @@ typedef struct {
     int volume;               /* 0-100 */
     int timeout_idx;          /* 0 = 30 s, 1 = 1 min, 2 = 2 min */
     int disp_speed;           /* 0 = normal, 1 = turbo (applies after a restart) */
+    bool web_on, web_failed;  /* web console */
+    char web_ssid[24], web_pass[12];
+    int draw_mode;            /* 0 = factory full-frame PSRAM buffers, 1 = small internal buffers */
     int bl_freq;              /* backlight PWM: 0 = 5 kHz, 1 = 20 kHz, 2 = 40 kHz */
     bool auto_time;
     int tz_idx;               /* index into mx_tz, -1 = custom rule from the setup page */
@@ -204,6 +207,7 @@ typedef struct {
     void (*bt_set_enabled)(bool on);
     void (*set_timeout)(int idx);
     void (*set_disp_speed)(int idx);
+    void (*set_draw_mode)(int idx);
     void (*set_bl_freq)(int idx);
     void (*set_time)(const struct tm *local);    /* hand-set date and time */
     void (*set_tz)(int idx);
@@ -219,6 +223,7 @@ typedef struct {
     void (*gallery_close)(void);             /* leave the viewer: free the picture */
     void (*chip_reinstall)(void);            /* write the camera chip firmware */
     void (*sd_refresh)(void);
+    void (*web_set)(bool on);               /* web console hotspot */
     void (*refresh_prices)(void);
     void (*reboot)(void);
     void (*power_off)(void);

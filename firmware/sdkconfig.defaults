@@ -22,6 +22,8 @@ CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
 CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=262144
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+# the web console's log ring survives a restart in PSRAM
+CONFIG_SPIRAM_ALLOW_NOINIT_SEG_EXTERNAL_MEMORY=y
 CONFIG_SPI_MASTER_IN_IRAM=y
 
 # System
@@ -29,6 +31,11 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=10000
 CONFIG_FATFS_LFN_STACK=y
+# a crash leaves its summary (task, address, backtrace) in the coredump
+# partition; the web console shows it after the restart
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 
 # Console on UART0: the USB-C socket goes through a CH342 USB-serial bridge
 # to UART0 (the factory firmware does the same). The web installer talks to it

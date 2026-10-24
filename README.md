@@ -99,3 +99,10 @@ The camera chip firmware is Seeed's stock SSCMA image (Apache-2.0, from Seeed-St
 - **Sounds**: new synthesized chimes (glass and marimba style) for notifications, assistant replies, charger in and out, microphone on and off, camera, errors and power off. They play in the background, so the UI no longer waits for them.
 
 The camera chip (Himax WE2) only drives the camera; it has no connection to the display, so it cannot improve screen quality.
+
+## v2.3
+
+- **Settings no longer restart the watch**: writing a setting to flash turns the CPU cache off, and the display task, whose stack lives in PSRAM, aborted the chip when it did that. Every option changed on screen (Wi-Fi password, sound, time zone, brightness and volume in the quick panel) restarted the watch, which looked like a jump to Home. Saves from such tasks now go through a small task with its stack in internal RAM.
+- **Drawing mode** (Settings > Display > Drawing): *Factory* (the default) draws exactly like Seeed's firmware, into two full-frame buffers in PSRAM; *Fast* uses 32-row buffers in internal RAM. Applies after a restart. Holding the knob at power-on goes back to Factory.
+- **Web console** (Settings > Web console): the watch opens a hotspot `Maximus-XXXX` (the password is shown on the watch) and serves `http://192.168.4.1` with the status, a live log you can copy or download, the log from before the last restart, and the last crash (task, address, backtrace from the new coredump partition). On the home network the page is also at the watch's own address.
+- CI publishes the firmware ELF next to the image (`site/firmware/maximus-os.elf`) so backtraces can be decoded.

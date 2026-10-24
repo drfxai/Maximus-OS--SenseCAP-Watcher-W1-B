@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <time.h>
 
-#define MX_FW_VERSION "2.2.0"
+#define MX_FW_VERSION "2.3.0"
 
 #include "ui/model.h"
 
@@ -31,6 +31,7 @@ int mx_wifi_scan(mx_ap_t *out, int max);             /* blocking, a few seconds 
 void mx_wifi_join(const char *ssid, const char *pass); /* remember and connect */
 void mx_wifi_forget(void);
 void mx_net_set_auto_time(bool on);                  /* NTP on/off */
+bool mx_net_ap(bool on, const char *ssid, const char *pass); /* hotspot for the web console */
 
 /* HTTPS request to the relay. Returns the HTTP status (or -1) and a
    heap-allocated NUL-terminated body in *out (caller frees). */
