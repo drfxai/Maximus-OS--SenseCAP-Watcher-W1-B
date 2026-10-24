@@ -1,9 +1,9 @@
 /*
- * Rotary knob: rotate = navigate, press = confirm, 5 s = home, 10 s = power off.
+ * Rotary knob: rotate = navigate, click = select, hold 2 s = home, hold 5 s = power off.
  *
  * The button is on the IO expander (active low) so it is polled every 20 ms.
- * Release decides the action: a tap under 5 s confirms, a 5-10 s hold goes
- * home. Reaching 10 s powers off straight away, without waiting for release.
+ * Release decides the action: a click under 2 s selects, a 2-5 s hold goes
+ * home. Reaching 5 s powers off straight away, without waiting for release.
  * While held, a progress event (every 100 ms) lets the UI draw the ring.
  */
 #include "mx_knob.h"

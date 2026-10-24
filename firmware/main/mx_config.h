@@ -15,6 +15,12 @@ typedef struct {
     uint8_t volume;     /* 0-100 */
     uint8_t mode;       /* AI mode index */
     bool knob_invert;   /* swap rotation direction */
+    bool wifi_enabled;  /* radio switch in Settings */
+    bool bt_enabled;    /* BLE advertising switch in Settings */
+    bool auto_time;     /* follow NTP; off keeps the time set by hand */
+    uint8_t timeout_idx;/* screen timeout: 0 = 30 s, 1 = 1 min, 2 = 2 min */
+    uint8_t disp_speed; /* 0 = normal (40 MHz pixel clock), 1 = turbo (80 MHz) */
+    bool cam_video;     /* camera opens in video mode */
     bool pin_set;
     uint8_t pin_hash[32];
 } mx_cfg_t;

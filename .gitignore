@@ -12,3 +12,4 @@ sim/render
 tools/_preview/
 site/firmware/
 *.pyc
+firmware/spiffs/

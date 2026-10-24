@@ -72,6 +72,22 @@ static void note(mx_model_t *m, mx_note_kind_t k, const char *t, const char *b, 
 
 void mx_activity(void) {}
 
+/* a stand-in for a camera frame: sky, hills and a sun, so scaling is visible */
+static lv_color_t cam_buf[416 * 416], gal_buf[412 * 309];
+
+static void paint(lv_color_t *b, int w, int h, int seed)
+{
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            int r = 40 + y * 90 / h, g = 90 + y * 80 / h, bl = 200 - y * 60 / h;
+            int dx = x - (w * (30 + seed * 10) / 100), dy = y - h / 4;
+            if (dx * dx + dy * dy < (h / 9) * (h / 9)) { r = 255; g = 220; bl = 90; }
+            if (y > h * 6 / 10 + (int)(20 * ((x * 7 + seed * 40) % 97) / 97.0)) { r = 40 + seed * 8; g = 120; bl = 60; }
+            if (((x / 16) + (y / 16)) % 2 == 0 && y < 24) { r = g = bl = 255; }
+            b[y * w + x] = lv_color_make(r, g, bl);
+        }
+}
+
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : ".";
@@ -88,10 +104,24 @@ int main(int argc, char **argv)
     m.time_valid = true;
     m.now.tm_hour = 10; m.now.tm_min = 24; m.now.tm_mday = 26; m.now.tm_mon = 7; m.now.tm_year = 126; m.now.tm_wday = 3;
     mktime(&m.now);
-    m.battery = 92; m.wifi = true; m.relay_ok = true; m.brightness = 80; m.volume = 50;
+    m.battery = 92; m.charging = true; m.wifi = true; m.relay_ok = true; m.brightness = 80; m.volume = 50;
+    m.wifi_state = MX_WIFI_CONNECTED; snprintf(m.ssid, sizeof m.ssid, "Maximus-5G");
+    m.bt_on = true; m.timeout_idx = 1; m.auto_time = true; m.tz_idx = 1;
+    m.sd_state = MX_SD_ST_OK; m.sd_total_mb = 30436; m.sd_free_mb = 28110;
+    m.cam_state = MX_CAM_LIVE; m.chip_state = MX_CHIP_OK; snprintf(m.chip_ver, sizeof m.chip_ver, "2024.05.1");
     snprintf(m.ip, sizeof m.ip, "192.168.1.42");
     snprintf(m.pair_code, sizeof m.pair_code, "483920");
     snprintf(m.price_src, sizeof m.price_src, "COINBASE");
+    static const struct { const char *s; int r; bool sec; } aps[] = {
+        { "Maximus-5G", -48, true }, { "Home WiFi", -61, true }, { "CoffeeShop Guest", -72, false },
+        { "Neighbour-2.4", -81, true }, { "xfinitywifi", -84, false } };
+    for (unsigned i = 0; i < sizeof aps / sizeof *aps; i++) {
+        snprintf(m.aps[i].ssid, sizeof m.aps[i].ssid, "%s", aps[i].s);
+        m.aps[i].rssi = aps[i].r; m.aps[i].secure = aps[i].sec;
+    }
+    m.n_aps = 5;
+    m.gal_count = 24; m.gal_idx = 2; snprintf(m.gal_name, sizeof m.gal_name, "IMG_0022.JPG");
+    snprintf(m.gal_info, sizeof m.gal_info, "640x480  41 KB");
     tk(&m.tk[0], "BTC", "63782.41", 2.36f, "64210.00", "61400.00", 0.3, 1);
     tk(&m.tk[1], "ETH", "3420.18", 1.87f, "3480.00", "3310.00", 2.5, 3);
     tk(&m.tk[2], "SOL", "142.61", 4.21f, "146.00", "135.20", 40, 5);
@@ -106,33 +136,71 @@ int main(int argc, char **argv)
     note(&m, MX_NOTE_SYSTEM, "System", "Battery 92%", 63);
     note(&m, MX_NOTE_MESSAGE, "Telegram", "Check the 4h chart", 90);
     m.pin_set = true;
+    paint(cam_buf, 416, 416, 1);
+    paint(gal_buf, 412, 309, 3);
 
     static mx_actions_t a;
     ui_init(&m, &a);
     settle(400);
 
-    static const char *names[MX_PAGE_COUNT] = { "01_home", "02_market", "03_assist", "04_portfolio", "05_journal", "06_modes", "07_notes", "08_settings", "09_security" };
-    for (int p = 0; p < MX_PAGE_COUNT; p++) {
-        ui_goto((mx_page_t)p, false);
-        if (p == MX_PAGE_ASSIST) { m.assist = MX_ASSIST_LISTENING; m.mic_level = 70; }
-        if (p == MX_PAGE_HOME) ui_ring_color(0x2F7BFF);
-        ui_refresh();
-        settle(500);
-        dump(dir, names[p]);
-    }
-    /* extra states */
+#define SHOT(name) do { ui_refresh(); settle(450); dump(dir, name); } while (0)
+
+    ui_ring_color(0x2F7BFF);
+    SHOT("01_home");
+    ui_ring_color(0);
+
+    m.cam_pix = cam_buf; m.cam_w = 416; m.cam_h = 416;
+    ui_goto(MX_PAGE_CAMERA, false); ui_camera_frame();
+    SHOT("02_camera_photo");
+    m.cam_video = true; SHOT("03_camera_video");
+    m.cam_rec = true; m.cam_rec_s = 75; snprintf(m.cam_msg, sizeof m.cam_msg, "Recording to VID_0007.AVI"); SHOT("04_camera_recording");
+    m.cam_rec = false; m.cam_video = false; m.cam_msg[0] = 0; m.sd_state = MX_SD_ST_NONE; SHOT("05_camera_no_card");
+    m.sd_state = MX_SD_ST_OK; m.cam_state = MX_CAM_NOCHIP; m.cam_pix = NULL; ui_camera_frame(); SHOT("06_camera_no_chip");
+    m.cam_state = MX_CAM_LIVE;
+
+    m.gal_pix = gal_buf; m.gal_w = 412; m.gal_h = 309;
+    ui_goto(MX_PAGE_GALLERY, false); ui_gallery_frame();
+    SHOT("07_gallery");
+    m.sd_state = MX_SD_ST_NONE; SHOT("08_gallery_no_card"); m.sd_state = MX_SD_ST_OK;
+    ui_goto(MX_PAGE_VIEWER, false); ui_gallery_frame();
+    SHOT("09_viewer");
+    m.gal_video = true; snprintf(m.gal_name, sizeof m.gal_name, "VID_0006.AVI"); snprintf(m.gal_info, sizeof m.gal_info, "416x416  18 s  3.1 MB");
+    SHOT("10_viewer_video");
+    ui_input(MX_IN_CONFIRM); SHOT("11_viewer_menu");
+    ui_input(MX_IN_RIGHT); ui_input(MX_IN_CONFIRM); SHOT("12_viewer_delete_armed");
+    ui_input(MX_IN_RIGHT); ui_input(MX_IN_RIGHT); ui_input(MX_IN_CONFIRM);
+
     ui_goto(MX_PAGE_ASSIST, false);
-    m.assist = MX_ASSIST_REPLY; ui_refresh(); settle(500); dump(dir, "10_assist_reply");
-    m.assist = MX_ASSIST_THINKING; ui_refresh(); settle(500); dump(dir, "11_assist_thinking");
-    ui_goto(MX_PAGE_SETTINGS, false);
-    ui_input(MX_IN_CONFIRM); ui_input(MX_IN_RIGHT); ui_input(MX_IN_RIGHT); ui_refresh(); settle(300); dump(dir, "12_settings_sel");
-    ui_goto(MX_PAGE_MODES, false);
-    ui_input(MX_IN_CONFIRM); ui_input(MX_IN_RIGHT); ui_refresh(); settle(300); dump(dir, "13_modes_sel");
+    m.assist = MX_ASSIST_LISTENING; m.mic_level = 70; SHOT("13_assist");
+    m.assist = MX_ASSIST_REPLY; SHOT("14_assist_reply");
+    ui_goto(MX_PAGE_MARKET, false); SHOT("15_market");
+    ui_goto(MX_PAGE_PORTFOLIO, false); SHOT("16_portfolio");
+    ui_goto(MX_PAGE_JOURNAL, false); SHOT("17_journal");
+    ui_goto(MX_PAGE_MODES, false); SHOT("18_modes");
+    ui_goto(MX_PAGE_NOTES, false); SHOT("19_notes");
+
+    ui_goto(MX_PAGE_SETTINGS, false); SHOT("20_settings");
+    ui_input(MX_IN_CONFIRM); for (int i = 0; i < 5; i++) ui_input(MX_IN_RIGHT); SHOT("21_settings_scrolled");
+    ui_goto(MX_PAGE_WIFI, false); SHOT("22_wifi");
+    m.wifi_state = MX_WIFI_OFF; SHOT("23_wifi_off"); m.wifi_state = MX_WIFI_CONNECTED;
+    ui_goto(MX_PAGE_WIFIPASS, false); SHOT("24_wifi_password");
+    for (int i = 0; i < 7; i++) ui_input(MX_IN_RIGHT); SHOT("25_wifi_password_knob");
+    ui_goto(MX_PAGE_DISPLAY, false); SHOT("26_display");
+    ui_input(MX_IN_CONFIRM); ui_input(MX_IN_LEFT); ui_input(MX_IN_LEFT); SHOT("27_display_adjust");
+    ui_goto(MX_PAGE_TIME, false); SHOT("28_time");
+    ui_goto(MX_PAGE_TIMESET, false); ui_input(MX_IN_RIGHT); ui_input(MX_IN_CONFIRM); ui_input(MX_IN_CONFIRM); ui_input(MX_IN_CONFIRM); SHOT("29_time_set");
+    ui_goto(MX_PAGE_CHIP, false); SHOT("30_chip");
+    m.chip_state = MX_CHIP_FLASHING; m.chip_pct = 63; SHOT("31_chip_flashing");
+    m.chip_state = MX_CHIP_MISSING; SHOT("32_chip_missing"); m.chip_state = MX_CHIP_OK;
+    ui_goto(MX_PAGE_SECURITY, false); SHOT("33_security");
     ui_goto(MX_PAGE_HOME, false);
-    ui_show_alert("BTC/USDT", "Stop Loss Triggered", "$61,230.00", true); settle(300); dump(dir, "14_alert");
+    ui_show_alert("BTC/USDT", "Stop Loss Triggered", "$61,230.00", true); settle(300); dump(dir, "34_alert");
     ui_input(MX_IN_CONFIRM);
-    ui_set_hold(6500); settle(300); dump(dir, "15_hold");
+    ui_set_hold(1400); settle(300); dump(dir, "35_hold_click");
+    ui_set_hold(3200); settle(300); dump(dir, "36_hold_home");
+    ui_set_hold(5000); settle(300); dump(dir, "37_hold_off");
     ui_set_hold(0);
+    m.battery = 18; m.charging = false; ui_refresh(); settle(300); dump(dir, "38_home_low_battery");
     puts("ok");
     return 0;
 }

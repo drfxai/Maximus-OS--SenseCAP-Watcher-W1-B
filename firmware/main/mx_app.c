@@ -25,27 +25,40 @@
 #include "sensecap-watcher.h"
 
 #include "mx_audio.h"
+#include "mx_ble.h"
 #include "mx_camera.h"
 #include "mx_config.h"
+#include "mx_himax.h"
 #include "mx_knob.h"
+#include "mx_media.h"
 #include "mx_net.h"
 #include "mx_relay.h"
 #include "mx_rgb.h"
+#include "mx_sd.h"
 #include "ui/ui.h"
 
 static const char *TAG = "app";
 
-#define IDLE_DIM_MS 45000
-#define IDLE_LOCK_MS 300000
 #define JOURNAL_FILE "/spiffs/journal.tsv"
 
-typedef enum { CMD_LISTEN, CMD_JOURNAL, CMD_SNAPSHOT, CMD_PRICES } cmd_t;
+typedef enum {
+    CMD_LISTEN, CMD_JOURNAL, CMD_SNAPSHOT, CMD_PRICES,
+    CMD_WIFI_SCAN, CMD_WIFI_JOIN, CMD_WIFI_FORGET, CMD_WIFI_ENABLE,
+    CMD_BT, CMD_CHIP, CMD_SD,
+} cmd_type_t;
+
+typedef struct {
+    cmd_type_t type;
+    int arg;
+    char s1[33];
+    char s2[65];
+} cmd_t;
 
 static mx_model_t M;
 static QueueHandle_t s_cmdq;
-static volatile bool s_stop_rec, s_recording;
+static volatile bool s_stop_rec, s_recording, s_chip_busy, s_rtc_written;
 static volatile int64_t s_last_activity_ms;
-static bool s_dimmed;
+static bool s_dimmed, s_off;
 static uint64_t s_last_sig_ts;
 
 void mx_activity(void)
@@ -55,10 +68,18 @@ void mx_activity(void)
 
 static int64_t now_ms(void) { return esp_timer_get_time() / 1000; }
 
-static void send_cmd(cmd_t c)
+static void send_cmd_arg(cmd_type_t t, int arg, const char *s1, const char *s2)
 {
+    cmd_t c;
+    memset(&c, 0, sizeof c);
+    c.type = t;
+    c.arg = arg;
+    if (s1) strlcpy(c.s1, s1, sizeof c.s1);
+    if (s2) strlcpy(c.s2, s2, sizeof c.s2);
     xQueueSend(s_cmdq, &c, 0);
 }
+
+static void send_cmd(cmd_type_t t) { send_cmd_arg(t, 0, NULL, NULL); }
 
 /* ---- actions (called from the LVGL thread) ----------------------- */
 
@@ -96,6 +117,79 @@ static void act_volume(int pct)
 }
 
 static void act_snapshot(void) { send_cmd(CMD_SNAPSHOT); }
+
+static void act_wifi_enable(bool on) { send_cmd_arg(CMD_WIFI_ENABLE, on, NULL, NULL); }
+static void act_wifi_scan(void)
+{
+    if (!M.wifi_scanning) {
+        M.wifi_scanning = true;
+        send_cmd(CMD_WIFI_SCAN);
+    }
+}
+static void act_wifi_join(const char *ssid, const char *pass) { send_cmd_arg(CMD_WIFI_JOIN, 0, ssid, pass); }
+static void act_wifi_forget(void) { send_cmd(CMD_WIFI_FORGET); }
+static void act_bt(bool on) { send_cmd_arg(CMD_BT, on, NULL, NULL); }
+
+static void act_timeout(int idx)
+{
+    mx_cfg()->timeout_idx = (uint8_t)idx;
+    mx_cfg_save();
+}
+
+static void act_disp_speed(int idx)
+{
+    mx_cfg()->disp_speed = (uint8_t)idx;
+    mx_cfg_save();
+}
+
+static void act_set_time(const struct tm *lt)
+{
+    struct tm t = *lt;
+    t.tm_isdst = -1;
+    time_t e = mktime(&t);
+    struct timeval tv = { .tv_sec = e };
+    settimeofday(&tv, NULL);
+    struct tm u;
+    gmtime_r(&e, &u);
+    bsp_rtc_set_time(&u);
+    mx_cfg()->auto_time = false;
+    mx_cfg_save();
+    mx_net_set_auto_time(false);
+    localtime_r(&e, &M.now);
+    M.time_valid = true;
+    M.auto_time = false;
+}
+
+static void act_set_tz(int idx)
+{
+    if (idx < 0 || idx >= mx_tz_n) return;
+    strlcpy(mx_cfg()->tz, mx_tz[idx].rule, sizeof mx_cfg()->tz);
+    mx_cfg_save();
+    mx_net_apply_tz();
+    M.tz_idx = idx;
+    time_t n = time(NULL);
+    localtime_r(&n, &M.now);
+}
+
+static void act_auto_time(bool on)
+{
+    mx_cfg()->auto_time = on;
+    mx_cfg_save();
+    mx_net_set_auto_time(on);
+    if (on) s_rtc_written = false;
+}
+
+static void act_cam_open(void) { mx_media_camera_open(); }
+static void act_cam_close(void) { mx_media_camera_close(); }
+static void act_cam_shutter(void) { mx_media_camera_shutter(); }
+static void act_cam_video(bool v) { mx_media_camera_set_video(v); }
+static void act_gal_open(void) { mx_media_gallery_open(); }
+static void act_gal_show(int i) { mx_media_gallery_show(i); }
+static void act_gal_play(void) { mx_media_gallery_play(); }
+static bool act_gal_delete(int i) { return mx_media_gallery_delete(i); }
+static void act_gal_close(void) { mx_media_gallery_close(); }
+static void act_chip(void) { send_cmd(CMD_CHIP); }
+static void act_sd_refresh(void) { send_cmd(CMD_SD); }
 static void act_prices(void) { send_cmd(CMD_PRICES); }
 static void act_reboot(void) { esp_restart(); }
 
@@ -124,6 +218,27 @@ static const mx_actions_t ACTIONS = {
     .set_brightness = act_brightness,
     .set_volume = act_volume,
     .snapshot = act_snapshot,
+    .wifi_set_enabled = act_wifi_enable,
+    .wifi_scan = act_wifi_scan,
+    .wifi_join = act_wifi_join,
+    .wifi_forget = act_wifi_forget,
+    .bt_set_enabled = act_bt,
+    .set_timeout = act_timeout,
+    .set_disp_speed = act_disp_speed,
+    .set_time = act_set_time,
+    .set_tz = act_set_tz,
+    .set_auto_time = act_auto_time,
+    .camera_open = act_cam_open,
+    .camera_close = act_cam_close,
+    .camera_shutter = act_cam_shutter,
+    .camera_set_video = act_cam_video,
+    .gallery_open = act_gal_open,
+    .gallery_show = act_gal_show,
+    .gallery_play = act_gal_play,
+    .gallery_delete = act_gal_delete,
+    .gallery_close = act_gal_close,
+    .chip_reinstall = act_chip,
+    .sd_refresh = act_sd_refresh,
     .refresh_prices = act_prices,
     .reboot = act_reboot,
     .power_off = power_off,
@@ -134,34 +249,63 @@ static const mx_actions_t ACTIONS = {
 
 /* ---- UI tick (LVGL context) -------------------------------------- */
 
+static void wake_screen(void)
+{
+    if (!s_off && !s_dimmed) return;
+    s_off = false;
+    s_dimmed = false;
+    ui_screen_blank(false);
+    bsp_lcd_brightness_set(mx_cfg()->brightness);
+}
+
 static void ui_tick(lv_timer_t *t)
 {
     static int n;
     mx_knob_evt_t e;
     while (mx_knob_poll(&e)) {
+        if (e.type == MX_K_POWEROFF) {
+            ui_set_hold(MX_HOLD_OFF_MS);
+            power_off();
+            continue;
+        }
+        if (s_off) {
+            /* the first knob action only wakes the screen */
+            if (e.type == MX_K_LEFT || e.type == MX_K_RIGHT || e.type == MX_K_CONFIRM || e.type == MX_K_HOME) {
+                mx_activity();
+                wake_screen();
+            }
+            continue;
+        }
         switch (e.type) {
         case MX_K_LEFT: mx_activity(); ui_input(MX_IN_LEFT); break;
         case MX_K_RIGHT: mx_activity(); ui_input(MX_IN_RIGHT); break;
         case MX_K_CONFIRM: ui_input(MX_IN_CONFIRM); break;
         case MX_K_HOME: ui_set_hold(0); ui_input(MX_IN_HOME); break;
         case MX_K_HOLD: mx_activity(); ui_set_hold(e.ms); break;
-        case MX_K_POWEROFF: ui_set_hold(10000); power_off(); break;
+        default: break;
         }
     }
     int64_t idle = now_ms() - s_last_activity_ms;
-    bool busy = s_recording || M.assist == MX_ASSIST_THINKING;
-    if (!s_dimmed && idle > IDLE_DIM_MS && !busy) {
-        s_dimmed = true;
+    int64_t limit = (int64_t)mx_timeout_s[mx_cfg()->timeout_idx] * 1000;
+    bool busy = s_recording || s_chip_busy || M.assist == MX_ASSIST_THINKING || mx_media_busy();
+    if (busy && idle > limit / 2) mx_activity();         /* a camera preview or a flash keeps the screen on */
+    if (!s_off && idle > limit) {
+        s_off = true;
+        ui_screen_blank(true);
+        bsp_lcd_brightness_set(0);
+        if (mx_cfg()->pin_set && !M.locked) {
+            M.locked = true;
+            ui_goto(MX_PAGE_SECURITY, false);
+        }
+    } else if (s_off && idle < 1500) {
+        wake_screen();
+    } else if (!s_off && !s_dimmed && idle > limit * 7 / 10) {
+        s_dimmed = true;                                  /* a warning dim before the screen goes off */
         bsp_lcd_brightness_set(12);
-    } else if (s_dimmed && idle < IDLE_DIM_MS) {
-        s_dimmed = false;
-        bsp_lcd_brightness_set(mx_cfg()->brightness);
+    } else if (!s_off && s_dimmed && idle < limit * 7 / 10) {
+        wake_screen();
     }
-    if (mx_cfg()->pin_set && !M.locked && idle > IDLE_LOCK_MS) {
-        M.locked = true;
-        ui_goto(MX_PAGE_SECURITY, false);
-    }
-    if (++n % 4 == 0) ui_refresh();
+    if (!s_off && ++n % 4 == 0) ui_refresh();
 }
 
 /* ---- helpers for app_task --------------------------------------- */
@@ -294,7 +438,8 @@ static void do_snapshot(void)
     size_t len = 0;
     const char *msg;
     bool ok = false;
-    if (!mx_camera_ready()) msg = "Camera module not responding";
+    if (mx_media_camera_active()) msg = "Close the Camera page first";
+    else if (!mx_camera_ready()) msg = "Camera module not responding";
     else if (!mx_camera_snapshot(&jpeg, &len)) msg = "Camera gave no image";
     else if (!mx_relay_photo(jpeg, len, "Maximus camera")) msg = "Photo captured, upload failed";
     else { msg = "Photo sent to Telegram"; ok = true; }
@@ -384,18 +529,97 @@ static void rtc_to_system(void)
     }
 }
 
+/* ---- camera chip firmware ---------------------------------------- */
+
+static bool s_console_flash;
+
+static void chip_progress(int pct)
+{
+    mx_activity();
+    if (s_console_flash) printf("MAXIMUS_HIMAX_PROGRESS %d\n", pct);
+    if (lvgl_port_lock(0)) {
+        M.chip_pct = pct;
+        lvgl_port_unlock();
+    }
+}
+
+bool mx_app_chip_install(bool console)
+{
+    if (s_chip_busy) return false;
+    s_console_flash = console;
+    if (!mx_himax_image_present(NULL)) {
+        if (console) printf("MAXIMUS_ERR the camera chip image is not in this firmware\n");
+        if (lvgl_port_lock(0)) { M.chip_state = MX_CHIP_FAILED; lvgl_port_unlock(); }
+        return false;
+    }
+    s_chip_busy = true;
+    if (lvgl_port_lock(0)) {
+        M.chip_state = MX_CHIP_FLASHING;
+        M.chip_pct = 0;
+        lvgl_port_unlock();
+    }
+    mx_media_camera_close();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    mx_rgb_set(MX_RGB_PROCESSING);
+    bool ok = mx_himax_flash(chip_progress);
+    mx_rgb_set(MX_RGB_OFF);
+    if (lvgl_port_lock(0)) {
+        M.chip_state = ok ? MX_CHIP_DONE : MX_CHIP_FAILED;
+        lvgl_port_unlock();
+    }
+    if (console) printf(ok ? "MAXIMUS_HIMAX_DONE\n" : "MAXIMUS_ERR camera chip install failed\n");
+    s_chip_busy = false;
+    if (ok) {
+        mx_audio_chime(0);
+        vTaskDelay(pdMS_TO_TICKS(2500));
+        esp_restart();
+    }
+    mx_audio_chime(2);
+    return ok;
+}
+
 static void app_task(void *arg)
 {
-    int64_t last_sec = 0, last_bat = -100000, last_prices = -100000, last_poll = 0, last_ping = -100000, wifi_up_at = 0;
-    bool rtc_written = false, welcomed = false;
+    int64_t last_sec = 0, last_bat = -100000, last_prices = -100000, last_poll = 0, last_ping = -100000, wifi_up_at = 0, last_sd = -100000;
+    bool welcomed = false, got_ver = false;
     for (;;) {
         cmd_t c;
         if (xQueueReceive(s_cmdq, &c, pdMS_TO_TICKS(200)) == pdTRUE) {
-            switch (c) {
+            switch (c.type) {
             case CMD_LISTEN: do_voice(false); break;
             case CMD_JOURNAL: do_voice(true); break;
             case CMD_SNAPSHOT: do_snapshot(); break;
             case CMD_PRICES: last_prices = -100000; break;
+            case CMD_WIFI_ENABLE:
+                mx_wifi_enable(c.arg);
+                if (!c.arg && lvgl_port_lock(0)) { M.n_aps = 0; lvgl_port_unlock(); }
+                break;
+            case CMD_WIFI_SCAN: {
+                static mx_ap_t found[MX_MAX_APS];
+                int n = mx_wifi_scan(found, MX_MAX_APS);
+                if (lvgl_port_lock(0)) {
+                    memcpy(M.aps, found, sizeof found);
+                    M.n_aps = n;
+                    M.wifi_scanning = false;
+                    lvgl_port_unlock();
+                }
+                break;
+            }
+            case CMD_WIFI_JOIN: mx_wifi_join(c.s1, c.s2); break;
+            case CMD_WIFI_FORGET: mx_wifi_forget(); break;
+            case CMD_BT: {
+                bool ok = mx_ble_set(c.arg);
+                mx_cfg()->bt_enabled = ok ? c.arg : mx_ble_on();
+                mx_cfg_save();
+                if (lvgl_port_lock(0)) {
+                    M.bt_on = mx_ble_on();
+                    M.bt_failed = !ok;
+                    lvgl_port_unlock();
+                }
+                break;
+            }
+            case CMD_CHIP: mx_app_chip_install(false); break;
+            case CMD_SD: last_sd = -100000; break;
             }
         }
         int64_t t = now_ms();
@@ -411,24 +635,41 @@ static void app_task(void *arg)
             int pct = 0;
             bool chg = false;
             if (bat_due) { last_bat = t; pct = bsp_battery_get_percent(); chg = bsp_system_is_charging(); }
+            bool sd_due = t - last_sd >= 4000;
+            mx_sd_state_t sds = mx_sd_state();
+            uint32_t sd_tot = 0, sd_free = 0;
+            if (sd_due) { last_sd = t; if (sds == MX_SD_OK) mx_sd_space(&sd_tot, &sd_free); }
+            mx_chip_state_t chip = M.chip_state;
+            if (chip != MX_CHIP_FLASHING && chip != MX_CHIP_DONE && chip != MX_CHIP_FAILED)
+                chip = mx_camera_ready() ? MX_CHIP_OK : mx_camera_probing() ? MX_CHIP_UNKNOWN : MX_CHIP_MISSING;
+            char ver[24] = "";
+            if (chip == MX_CHIP_OK && !got_ver) { got_ver = mx_himax_version(ver, sizeof ver); }
             if (lvgl_port_lock(0)) {
                 M.now = lt;
                 M.time_valid = ns.time_valid;
                 M.wifi = ns.wifi;
                 M.relay_ok = ns.relay_ok;
+                M.wifi_state = ns.state;
+                strlcpy(M.ssid, ns.ssid, sizeof M.ssid);
                 strlcpy(M.ip, ns.ip, sizeof M.ip);
                 if (bat_due) { M.battery = pct; M.charging = chg; }
+                M.sd_state = sds == MX_SD_OK ? MX_SD_ST_OK : sds == MX_SD_ERROR ? MX_SD_ST_ERROR : MX_SD_ST_NONE;
+                if (sd_due) { M.sd_total_mb = sd_tot; M.sd_free_mb = sd_free; }
+                M.chip_state = chip;
+                if (ver[0]) strlcpy(M.chip_ver, ver, sizeof M.chip_ver);
                 lvgl_port_unlock();
             }
             if (ns.wifi && !wifi_up_at) wifi_up_at = t;
             if (!ns.wifi) wifi_up_at = 0;
-            if (!ns.time_valid && ns.wifi && wifi_up_at && t - wifi_up_at > 20000 && mx_cfg_configured()) time_fallback_from_relay();
-            if (ns.time_valid && !rtc_written && sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-                struct tm u;
-                time_t nt = time(NULL);
-                gmtime_r(&nt, &u);
-                bsp_rtc_set_time(&u);
-                rtc_written = true;
+            if (mx_cfg()->auto_time) {
+                if (!ns.time_valid && ns.wifi && wifi_up_at && t - wifi_up_at > 20000 && mx_cfg_configured()) time_fallback_from_relay();
+                if (ns.time_valid && !s_rtc_written && sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+                    struct tm u;
+                    time_t nt = time(NULL);
+                    gmtime_r(&nt, &u);
+                    bsp_rtc_set_time(&u);
+                    s_rtc_written = true;
+                }
             }
         }
         if (!welcomed && t > 4000) {
@@ -473,11 +714,22 @@ void mx_app_start(void)
     M.pin_set = c->pin_set;
     M.locked = c->pin_set;
     M.battery = 100;
+    M.timeout_idx = c->timeout_idx;
+    M.disp_speed = c->disp_speed;
+    M.auto_time = c->auto_time;
+    M.bt_on = false;
+    M.cam_video = c->cam_video;
+    M.tz_idx = -1;
+    for (int i = 0; i < mx_tz_n; i++) if (!strcmp(c->tz, mx_tz[i].rule)) M.tz_idx = i;
+    M.chip_state = MX_CHIP_UNKNOWN;
     journal_load();
     rtc_to_system();
     mx_activity();
 
-    s_cmdq = xQueueCreate(6, sizeof(cmd_t));
+    s_cmdq = xQueueCreate(8, sizeof(cmd_t));
+    mx_sd_start();
+    mx_media_start(&M);
+    if (c->bt_enabled) send_cmd_arg(CMD_BT, 1, NULL, NULL);
 
     lvgl_port_lock(0);
     ui_init(&M, &ACTIONS);
@@ -485,5 +737,5 @@ void mx_app_start(void)
     lvgl_port_unlock();
     bsp_lcd_brightness_set(c->brightness);
 
-    xTaskCreatePinnedToCore(app_task, "mx_app", 10240, NULL, 4, NULL, 0);
+    xTaskCreatePinnedToCore(app_task, "mx_app", 12288, NULL, 4, NULL, 0);
 }

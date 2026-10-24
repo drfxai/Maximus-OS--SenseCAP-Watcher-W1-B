@@ -39,4 +39,8 @@
 #define LV_SHADOW_CACHE_SIZE 0
 #define LV_IMG_CACHE_DEF_SIZE 2
 #define LV_USE_GRADIENT 1
+#define LV_USE_KEYBOARD 1
+#define LV_USE_TEXTAREA 1
+#define LV_USE_BTNMATRIX 1
+#define LV_USE_ANIMIMG 0
 #endif
