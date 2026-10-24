@@ -8,6 +8,7 @@
 #include "mbedtls/sha256.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "driver/usb_serial_jtag.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -183,14 +184,21 @@ static void handle_line(char *line)
 static void console_task(void *arg)
 {
     char buf[1024];
+    size_t n = 0;
     for (;;) {
-        if (!fgets(buf, sizeof buf, stdin)) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
+        uint8_t ch;
+        if (usb_serial_jtag_read_bytes(&ch, 1, pdMS_TO_TICKS(100)) != 1) continue;
+        if (ch == '\n' || ch == '\r') {
+            if (n) {
+                buf[n] = 0;
+                handle_line(buf);
+            }
+            n = 0;
+        } else if (n < sizeof buf - 1) {
+            buf[n++] = (char)ch;
+        } else {
+            n = 0; /* overlong line: drop it */
         }
-        size_t n = strlen(buf);
-        while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
-        if (n) handle_line(buf);
     }
 }
 

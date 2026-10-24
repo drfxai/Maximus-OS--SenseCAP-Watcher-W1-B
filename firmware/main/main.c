@@ -3,7 +3,6 @@
  */
 #include "esp_err.h"
 #include "esp_log.h"
-#include "esp_vfs_usb_serial_jtag.h"
 #include "driver/usb_serial_jtag.h"
 #include "nvs_flash.h"
 #include "sensecap-watcher.h"
@@ -31,7 +30,6 @@ void app_main(void)
     /* line-based console on the USB port, used by the web installer */
     usb_serial_jtag_driver_config_t uc = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&uc);
-    esp_vfs_usb_serial_jtag_use_driver();
 
     bsp_spiffs_init_default();
     bsp_io_expander_init();
