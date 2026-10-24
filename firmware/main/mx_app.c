@@ -366,11 +366,20 @@ static void time_fallback_from_relay(void)
     free(body);
 }
 
+/* UTC broken-down time to epoch (newlib has no declared timegm). */
+static time_t utc_to_epoch(const struct tm *t)
+{
+    int y = t->tm_year + 1900, m = t->tm_mon + 1;
+    if (m <= 2) { y--; m += 12; }
+    int64_t days = 365LL * y + y / 4 - y / 100 + y / 400 + (153 * (m - 3) + 2) / 5 + t->tm_mday - 719469;
+    return (time_t)(days * 86400 + t->tm_hour * 3600 + t->tm_min * 60 + t->tm_sec);
+}
+
 static void rtc_to_system(void)
 {
     struct tm t;
     if (bsp_rtc_get_time(&t) == ESP_OK && t.tm_year >= 124) {
-        struct timeval tv = { .tv_sec = timegm(&t) };
+        struct timeval tv = { .tv_sec = utc_to_epoch(&t) };
         settimeofday(&tv, NULL);
     }
 }
