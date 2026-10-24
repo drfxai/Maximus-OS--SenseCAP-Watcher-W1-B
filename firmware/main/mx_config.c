@@ -36,6 +36,7 @@ static void defaults(void)
     strlcpy(C.symbols, "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT", sizeof C.symbols);
     C.brightness = 100;   /* full backlight: no PWM, so no bands (factory default) */
     C.bl_freq = 2;
+    C.draw_mode = 1;      /* fast: factory drawing gave a white screen in 2.3.0 */
     C.volume = 70;
     C.wifi_enabled = true;
     C.auto_time = true;
@@ -69,7 +70,7 @@ void mx_cfg_load(void)
     if (nvs_get_u8(h, "cam_video", &b) == ESP_OK) C.cam_video = b;
     nvs_get_u8(h, "timeout", &C.timeout_idx);
     nvs_get_u8(h, "disp_speed", &C.disp_speed);
-    nvs_get_u8(h, "draw", &C.draw_mode);
+    nvs_get_u8(h, "draw2", &C.draw_mode);
     if (nvs_get_u8(h, "web_on", &b) == ESP_OK) C.web_on = b;
     n = sizeof C.web_pass;
     nvs_get_str(h, "web_pass", C.web_pass, &n);
@@ -88,7 +89,7 @@ void mx_cfg_load(void)
     if (C.volume > 100) C.volume = 100;
     if (C.timeout_idx > 2) C.timeout_idx = 1;
     if (C.disp_speed > 1) C.disp_speed = 0;
-    if (C.draw_mode > 1) C.draw_mode = 0;
+    if (C.draw_mode > 1) C.draw_mode = 1;
     if (C.bl_freq > 2) C.bl_freq = 2;
 }
 
@@ -113,7 +114,7 @@ static void cfg_write(void)
     nvs_set_u8(h, "cam_video", C.cam_video);
     nvs_set_u8(h, "timeout", C.timeout_idx);
     nvs_set_u8(h, "disp_speed", C.disp_speed);
-    nvs_set_u8(h, "draw", C.draw_mode);
+    nvs_set_u8(h, "draw2", C.draw_mode);
     nvs_set_u8(h, "web_on", C.web_on);
     nvs_set_str(h, "web_pass", C.web_pass);
     nvs_set_u8(h, "blf", C.bl_freq);

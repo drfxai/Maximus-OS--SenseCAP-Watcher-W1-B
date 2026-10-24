@@ -109,16 +109,16 @@ void app_main(void)
 
     /* A picture that comes out garbled at Turbo speed can be undone without a
        working screen: hold the knob while powering on. */
-    if ((mx_cfg()->disp_speed || mx_cfg()->draw_mode) && bsp_exp_io_get_level(BSP_KNOB_BTN) == 0) {
+    if ((mx_cfg()->disp_speed || mx_cfg()->draw_mode != 1) && bsp_exp_io_get_level(BSP_KNOB_BTN) == 0) {
         ESP_LOGW(TAG, "knob held at boot: display speed back to normal");
         mx_cfg()->disp_speed = 0;
-        mx_cfg()->draw_mode = 0;
+        mx_cfg()->draw_mode = 1;
         mx_cfg_save();
     }
 
-    /* Factory drawing (the default) is what Seeed's firmware does: two
-       full-frame buffers in PSRAM, so the panel gets each change in one
-       transfer. Fast drawing uses 32-row buffers in internal DMA memory. */
+    /* Fast drawing (the default) uses 32-row buffers in internal DMA memory.
+       Factory drawing copies Seeed's firmware, two full-frame buffers in
+       PSRAM; on 2.3.0 it left the screen white, so it is opt-in. */
     bool fast = mx_cfg()->draw_mode == 1;
     bsp_display_cfg_t dcfg = {
         .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),

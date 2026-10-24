@@ -36,7 +36,7 @@ static void put(const char *s, size_t n)
 
 static int tee(const char *fmt, va_list ap)
 {
-    char b[256];
+    char b[160];        /* small: this runs on every task's stack, some only 3 KB */
     va_list cp;
     va_copy(cp, ap);
     int n = vsnprintf(b, sizeof b, fmt, cp);
