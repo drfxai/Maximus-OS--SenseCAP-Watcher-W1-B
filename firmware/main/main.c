@@ -22,6 +22,60 @@ static const char *TAG = "maximus";
 
 /* The board support package asks for the QSPI pixel clock through this hook
    (tools/fetch-deps.sh adds the weak default). Turbo doubles it. */
+uint32_t bsp_lcd_pclk_hz(void);
+
+/* Touch clean-up between the touch controller and LVGL. The SPD2010 now and
+   then reports a lifted finger for one or two reads in the middle of a touch,
+   or a point far away from the finger: LVGL took the first as a second tap
+   (one touch typed several letters) and the second as a swipe. A release only
+   counts after three released reads in a row, and a single wild jump is held
+   back until the next read confirms it. */
+static void (*s_touch_read)(lv_indev_drv_t *, lv_indev_data_t *);
+
+static void touch_read(lv_indev_drv_t *drv, lv_indev_data_t *data)
+{
+    static bool down;
+    static lv_point_t last;
+    static int up_reads, far_reads;
+    s_touch_read(drv, data);
+    bool pressed = data->state == LV_INDEV_STATE_PRESSED && !(data->point.x == 0 && data->point.y == 0);
+    if (!pressed) {
+        if (down && ++up_reads < 3) {
+            data->state = LV_INDEV_STATE_PRESSED;
+            data->point = last;
+            return;
+        }
+        down = false;
+        data->state = LV_INDEV_STATE_RELEASED;
+        data->point = last;
+        return;
+    }
+    up_reads = 0;
+    if (down) {
+        int dx = data->point.x - last.x, dy = data->point.y - last.y;
+        if (dx * dx + dy * dy > 90 * 90 && ++far_reads < 2) {
+            data->point = last;
+            return;
+        }
+    }
+    far_reads = 0;
+    down = true;
+    last = data->point;
+}
+
+static void touch_filter_install(void)
+{
+    if (!lvgl_port_lock(0)) return;
+    for (lv_indev_t *i = lv_indev_get_next(NULL); i; i = lv_indev_get_next(i)) {
+        if (i->driver->type == LV_INDEV_TYPE_POINTER && i->driver->read_cb != touch_read) {
+            s_touch_read = i->driver->read_cb;
+            i->driver->read_cb = touch_read;
+            break;
+        }
+    }
+    lvgl_port_unlock();
+}
+
 uint32_t bsp_lcd_pclk_hz(void)
 {
     return mx_cfg()->disp_speed ? 80 * 1000 * 1000 : 40 * 1000 * 1000;
@@ -76,6 +130,7 @@ void app_main(void)
         ESP_LOGE(TAG, "display init failed");
         return;
     }
+    touch_filter_install();
     bsp_rtc_init();
     mx_rgb_start();
     mx_audio_init(mx_cfg()->volume);

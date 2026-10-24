@@ -223,7 +223,10 @@ static void power_off(void)
 {
     ESP_LOGI(TAG, "power off");
     mx_rgb_set(MX_RGB_OFF);
-    mx_audio_chime(3);
+    mx_rgb_ai(false);
+    mx_rgb_power(false, false, 100);
+    mx_audio_sound(MX_SND_OFF);
+    mx_audio_wait(1500);
     bsp_lcd_brightness_set(0);
     vTaskDelay(pdMS_TO_TICKS(400));
     bsp_system_shutdown();
@@ -411,14 +414,15 @@ static void do_voice(bool journal)
         lvgl_port_unlock();
     }
     mx_rgb_set(MX_RGB_LISTENING);
-    mx_audio_beep(1200, 60);
+    mx_audio_sound(MX_SND_LISTEN);
+    mx_audio_wait(500);                   /* not into the recording */
 
     s_stop_rec = false;
     s_recording = true;
     size_t n = 0;
     int16_t *pcm = mx_audio_record(journal ? 45000 : 12000, &s_stop_rec, !journal, level_cb, &n);
     s_recording = false;
-    mx_audio_beep(800, 50);
+    mx_audio_sound(MX_SND_LISTEN_END);
 
     if (lvgl_port_lock(0)) {
         M.journal_rec = false;
@@ -454,7 +458,7 @@ static void do_voice(bool journal)
         }
         lvgl_port_unlock();
     }
-    if (ok) { mx_rgb_set(MX_RGB_OFF); mx_audio_chime(0); }
+    if (ok) { mx_rgb_set(MX_RGB_OFF); mx_audio_sound(journal ? MX_SND_OK : MX_SND_REPLY); }
     else { mx_rgb_flash(MX_RGB_WARNING, 4000); mx_audio_chime(2); }
 }
 
@@ -522,7 +526,8 @@ static void poll_inbox(void)
         mx_rgb_flash(sig.critical ? MX_RGB_CRITICAL : MX_RGB_WARNING, sig.critical ? 10000 : 5000);
         mx_audio_chime(sig.critical ? 2 : 1);
     } else {
-        mx_audio_chime(1);
+        mx_rgb_notify();
+        mx_audio_sound(MX_SND_NOTIFY);
     }
 }
 
@@ -653,6 +658,12 @@ static void app_task(void *arg)
         int64_t t = now_ms();
         mx_net_status_t ns;
         mx_net_status(&ns);
+        /* the ring glows blue while the Assistant is on screen */
+        if (lvgl_port_lock(0)) {
+            bool ai = ui_page() == MX_PAGE_ASSIST && !M.locked;
+            lvgl_port_unlock();
+            mx_rgb_ai(ai);
+        }
 
         if (t - last_sec >= 1000) {
             last_sec = t;
@@ -666,6 +677,7 @@ static void app_task(void *arg)
             bool usb = bsp_exp_io_get_level(BSP_PWR_VBUS_IN_DET) == 0;
             bool full = usb && bsp_exp_io_get_level(BSP_PWR_STDBY_DET) == 0;
             bool bat_due = t - last_bat >= 15000 || usb != s_usb_was;
+            if (usb != s_usb_was) mx_audio_sound(usb ? MX_SND_PLUG : MX_SND_UNPLUG);
             s_usb_was = usb;
             int pct = M.battery;
             if (bat_due) {
@@ -675,6 +687,7 @@ static void app_task(void *arg)
                 if (full) pct = 100;
                 s_bat_avg = pct;
             }
+            mx_rgb_power(usb, full, pct);
             bool sd_due = t - last_sd >= 4000;
             mx_sd_state_t sds = mx_sd_state();
             uint32_t sd_tot = 0, sd_free = 0;
@@ -758,6 +771,8 @@ void mx_app_start(void)
     s_usb_was = bsp_exp_io_get_level(BSP_PWR_VBUS_IN_DET) == 0;
     M.charging = s_usb_was;
     M.battery = s_bat_avg = bsp_battery_get_percent();
+    M.charged = s_usb_was && bsp_exp_io_get_level(BSP_PWR_STDBY_DET) == 0;
+    mx_rgb_power(s_usb_was, M.charged, M.battery);
     M.bl_freq = c->bl_freq;
     M.timeout_idx = c->timeout_idx;
     M.disp_speed = c->disp_speed;
@@ -769,6 +784,16 @@ void mx_app_start(void)
     M.chip_state = MX_CHIP_UNKNOWN;
     journal_load();
     rtc_to_system();
+    {
+        /* an unexpected restart looks like being thrown back to Home: say so */
+        const char *why = mx_reset_name();
+        if (!strcmp(why, "crash") || !strcmp(why, "watchdog") || !strcmp(why, "brownout")) {
+            char b[96];
+            snprintf(b, sizeof b, "Restarted after a %s. Install page > Watch device log", why);
+            add_note(MX_NOTE_SYSTEM, "Restarted", b);
+            ESP_LOGW(TAG, "started after a %s", why);
+        }
+    }
     mx_activity();
 
     s_cmdq = xQueueCreate(8, sizeof(cmd_t));

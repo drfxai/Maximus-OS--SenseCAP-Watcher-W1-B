@@ -482,8 +482,10 @@ void ui_row_click(lv_event_t *e)
 static struct {
     lv_indev_t *indev;
     bool down, scrolled, on_screen, on_slider;   /* where the press began */
+    bool glitch;                                  /* a point jumped too far to be a finger */
     lv_point_t p0, last;
     uint32_t t0;
+    int samples;
 } G;
 
 static void gesture_eval(void)
@@ -491,6 +493,9 @@ static void gesture_eval(void)
     int dx = G.last.x - G.p0.x, dy = G.last.y - G.p0.y;
     int ax = abs(dx), ay = abs(dy);
     if (lv_tick_elaps(G.t0) > 1200) return;              /* a slow drag is not a swipe */
+    /* nor is a tap with a misread point: it could send the screen back
+       or open the app grid when an option was picked */
+    if (G.glitch || G.samples < 3) return;
     lv_dir_t d = LV_DIR_NONE;
     if (ax >= SWIPE_MIN && ax * 2 > ay * 3 && !G.on_slider && (!G.scrolled || ax > ay * 3)) d = dx < 0 ? LV_DIR_LEFT : LV_DIR_RIGHT;
     else if (ay >= SWIPE_MIN && ay * 2 > ax * 3 && !G.scrolled) d = dy < 0 ? LV_DIR_TOP : LV_DIR_BOTTOM;
@@ -512,7 +517,10 @@ static void gesture_timer(lv_timer_t *t)
         if (!G.down) {
             G.down = true;
             G.scrolled = false;
+            G.glitch = false;
+            G.samples = 0;
             G.p0 = p;
+            G.last = p;
             G.t0 = lv_tick_get();
             lv_obj_t *hit = lv_indev_search_obj(lv_layer_top(), &p);
             if (!hit || hit == lv_layer_top()) hit = lv_indev_search_obj(lv_scr_act(), &p);
@@ -523,6 +531,9 @@ static void gesture_timer(lv_timer_t *t)
                 if (ui_list_of[cur]) { ui_list_of[cur]->sig_ok = false; ui_list_layout(ui_list_of[cur]); }
             }
         }
+        int jx = p.x - G.last.x, jy = p.y - G.last.y;
+        if (jx * jx + jy * jy > 120 * 120) G.glitch = true;
+        G.samples++;
         G.last = p;
         if (lv_indev_get_scroll_obj(G.indev)) G.scrolled = true;
     } else if (G.down) {

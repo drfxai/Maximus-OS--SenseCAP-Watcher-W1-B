@@ -275,6 +275,9 @@ int main(int argc, char **argv)
     ui_set_hold(5000); settle(300); dump(dir, "52_hold_off");
     ui_set_hold(0);
     m.battery = 18; m.charging = false; ui_refresh(); settle(300); dump(dir, "53_home_low_battery");
+    /* a tap whose last point is misread far away must not count as a swipe */
+    press(150, 220); f_pt.x = 400; settle(20); release(); settle(400);
+    printf("after glitch tap page %d (expect %d)\n", ui_page(), MX_PAGE_HOME);
     printf("final page %d (expect %d)\n", ui_page(), MX_PAGE_HOME);
     puts("ok");
     return 0;
