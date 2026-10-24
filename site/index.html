@@ -142,6 +142,17 @@ a { color: var(--blue); }
   </section>
 
   <p class="note" style="text-align:center">Knob: turn = navigate · tap = confirm · hold 5 s = Home · hold 10 s = power off.</p>
+  <section class="card" id="c4">
+    <h2><span class="num">&#9881;</span> Live log</h2>
+    <p class="sub">If something fails, press <b>Copy log</b> and send it to the developer. It records what this page and the flasher do, with timestamps. After installing, <b>Watch device log</b> also shows what the Watcher prints on boot.</p>
+    <div class="actions">
+      <button id="logcopy">Copy log</button>
+      <button class="secondary" id="logsave">Save as file</button>
+      <button class="secondary" id="logclear">Clear</button>
+      <button class="secondary" id="logdev">Watch device log</button>
+    </div>
+    <div class="log" id="livelog" aria-live="polite" style="max-height:320px;min-height:120px"></div>
+  </section>
 </main>
 
 <script type="module" src="https://unpkg.com/esp-web-tools@10.1.1/dist/web/install-button.js?module"></script>
@@ -151,6 +162,79 @@ const $ = (id) => document.getElementById(id);
 const hasSerial = "serial" in navigator;
 if (!hasSerial) $("nosupport").style.display = "block";
 
+/* ---- live log: page events, flasher output (console) and, on request, the device's own serial output ---- */
+const LIVE = [];
+function liveLog(kind, text) {
+  const t = new Date().toISOString().slice(11, 23);
+  const line = t + " [" + kind + "] " + text;
+  LIVE.push(line);
+  const el = $("livelog");
+  if (el) {
+    const d = document.createElement("div");
+    d.textContent = line;
+    if (kind === "error") d.style.color = "#ff8a80";
+    el.appendChild(d);
+    el.scrollTop = el.scrollHeight;
+  }
+}
+const fmt = (a) => a.map((x) => {
+  if (x instanceof Error) return x.name + ": " + x.message;
+  if (typeof x === "object") { try { return JSON.stringify(x); } catch (_) { return String(x); } }
+  return String(x);
+}).join(" ");
+for (const k of ["log", "info", "warn", "error", "debug"]) {
+  const orig = console[k].bind(console);
+  console[k] = (...a) => { orig(...a); try { liveLog(k === "log" || k === "info" || k === "debug" ? "flash" : k, fmt(a)); } catch (_) {} };
+}
+window.addEventListener("error", (e) => liveLog("error", e.message + (e.filename ? " (" + e.filename.split("/").pop() + ":" + e.lineno + ")" : "")));
+window.addEventListener("unhandledrejection", (e) => liveLog("error", "unhandled: " + fmt([e.reason])));
+liveLog("page", "Maximus installer, " + location.href);
+liveLog("page", "Browser: " + navigator.userAgent);
+liveLog("page", "Web Serial: " + ("serial" in navigator ? "yes" : "NO"));
+if ("serial" in navigator) {
+  navigator.serial.addEventListener("connect", (e) => liveLog("usb", "serial device connected"));
+  navigator.serial.addEventListener("disconnect", (e) => liveLog("usb", "serial device disconnected"));
+  navigator.serial.getPorts().then((p) => liveLog("usb", p.length + " previously allowed port(s)"), () => {});
+}
+const btn = document.querySelector("esp-web-install-button");
+btn.addEventListener("click", () => liveLog("page", "Install pressed (erase-first on)"), true);
+$("logcopy").onclick = async () => {
+  const text = LIVE.join("\n");
+  try { await navigator.clipboard.writeText(text); $("logcopy").textContent = "Copied"; }
+  catch (_) {
+    const r = document.createRange(); r.selectNodeContents($("livelog"));
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    $("logcopy").textContent = "Selected, press Ctrl+C";
+  }
+  setTimeout(() => ($("logcopy").textContent = "Copy log"), 2500);
+};
+$("logsave").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([LIVE.join("\n")], { type: "text/plain" }));
+  a.download = "maximus-installer-log.txt";
+  a.click();
+};
+$("logclear").onclick = () => { LIVE.length = 0; $("livelog").textContent = ""; };
+$("logdev").onclick = async () => {
+  if (!hasSerial) return liveLog("error", "Web Serial is not available in this browser");
+  let port;
+  try { port = await navigator.serial.requestPort(); await port.open({ baudRate: 115200 }); }
+  catch (e) { return liveLog("error", "could not open the port: " + e.message); }
+  liveLog("device", "--- listening at 115200 baud; reset the watch to see its boot output ---");
+  const dec = new TextDecoder();
+  let buf = "";
+  try {
+    const rd = port.readable.getReader();
+    for (;;) {
+      const { value, done } = await rd.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.search(/\r?\n/)) >= 0) { liveLog("device", buf.slice(0, i).replace(/\r$/, "")); buf = buf.slice(i + 1); }
+    }
+  } catch (e) { liveLog("error", "device log stopped: " + e.message); }
+};
+
 /* ---- installer manifest: built here from this page's own address so it cannot 404 ---- */
 (async () => {
   const fwUrl = new URL("firmware/maximus-os-full.bin", location.href);
@@ -159,9 +243,9 @@ if (!hasSerial) $("nosupport").style.display = "block";
     const r = await fetch(fwUrl, { method: "HEAD", cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const kb = Math.round((Number(r.headers.get("content-length")) || 0) / 1024);
-    st.textContent = "Firmware ready" + (kb ? " (" + kb + " KB)" : "") + ".";
+    liveLog("page", "firmware HEAD ok, " + r.headers.get("content-length") + " bytes"); st.textContent = "Firmware ready" + (kb ? " (" + kb + " KB)" : "") + ".";
   } catch (e) {
-    st.textContent = "The firmware file is not on this page yet (" + e.message + "). The site rebuilds after every update; wait a minute, reload with Ctrl+Shift+R, and try again.";
+    liveLog("error", "firmware check failed: " + e.message); st.textContent = "The firmware file is not on this page yet (" + e.message + "). The site rebuilds after every update; wait a minute, reload with Ctrl+Shift+R, and try again.";
     st.style.color = "#ff8a80";
   }
   const manifest = {

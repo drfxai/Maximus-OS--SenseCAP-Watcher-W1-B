@@ -95,3 +95,34 @@ jobs:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: [firmware, worker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: maximus-os-site
+          path: site
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Maximus OS build ${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            Maximus OS firmware for the SenseCAP Watcher W1-B (commit ${{ github.sha }}).
+
+            **Easiest:** use the web installer at https://drfxai.github.io/Maximus-OS--SenseCAP-Watcher-W1-B/ (Chrome or Edge).
+
+            **Manual flash** of `maximus-os-full.bin` (bootloader, partition table and app in one file, flash at offset 0x0):
+
+            ```
+            esptool.py --chip esp32s3 --port <PORT> --baud 460800 erase_flash
+            esptool.py --chip esp32s3 --port <PORT> --baud 460800 write_flash 0x0 maximus-os-full.bin
+            ```
+          files: site/firmware/maximus-os-full.bin
