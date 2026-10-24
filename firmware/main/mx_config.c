@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 #include "esp_memory_utils.h"
 #include "esp_cpu.h"
+#include "esp_heap_caps.h"
 
 #include "mx_app.h"
 #include "mx_camera.h"
@@ -239,9 +240,10 @@ static void status_line(void)
 {
     mx_net_status_t st;
     mx_net_status(&st);
-    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\",\"reset\":\"%s\"}\n",
+    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\",\"reset\":\"%s\",\"display\":%d,\"dma_free\":%u}\n",
            MX_FW_VERSION, st.wifi ? "true" : "false", st.ip, st.relay_ok ? "true" : "false",
-           mx_cfg_configured() ? "true" : "false", C.ssid, mx_reset_name());
+           mx_cfg_configured() ? "true" : "false", C.ssid, mx_reset_name(), mx_disp_rows,
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
 }
 
 static void handle_line(char *line)

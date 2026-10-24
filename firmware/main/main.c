@@ -3,6 +3,7 @@
  */
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "driver/uart.h"
 #include "driver/usb_serial_jtag.h"
 #include "nvs_flash.h"
@@ -21,6 +22,7 @@
 #include "mx_web.h"
 
 static const char *TAG = "maximus";
+int mx_disp_rows = -1;
 
 /* The board support package asks for the QSPI pixel clock through this hook
    (tools/fetch-deps.sh adds the weak default). Turbo doubles it. */
@@ -116,13 +118,26 @@ void app_main(void)
         mx_cfg_save();
     }
 
-    /* Fast drawing (the default) uses 32-row buffers in internal DMA memory.
-       Factory drawing copies Seeed's firmware, two full-frame buffers in
-       PSRAM; on 2.3.0 it left the screen white, so it is opt-in. */
+    /* Fast drawing (the default) uses two small buffers in internal DMA
+       memory, the same as 2.2. In 2.3.0 and 2.3.1 the web log took 48 KB of
+       that memory and the screen stayed white, then black. The buffers are
+       sized to what is free, down to 8 rows, so a squeeze costs speed and
+       not the picture; factory drawing (full frames in PSRAM) stays opt-in. */
     bool fast = mx_cfg()->draw_mode == 1;
+    size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    size_t dma_big = heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    int rows = DRV_LCD_V_RES;
+    if (fast) {
+        /* keep 24 KB back for SPI transfers, Wi-Fi and the camera link */
+        rows = 32;
+        while (rows > 8 && ((size_t)DRV_LCD_H_RES * rows * 2 > dma_big || (size_t)DRV_LCD_H_RES * rows * 4 + 24 * 1024 > dma_free)) rows -= 8;
+    }
+    ESP_LOGI(TAG, "memory before display: internal %u free, DMA %u free (largest %u), PSRAM %u free; drawing %s, %d rows",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)dma_free, (unsigned)dma_big,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), fast ? "fast" : "factory", rows);
     bsp_display_cfg_t dcfg = {
         .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
-        .buffer_size = DRV_LCD_H_RES * (fast ? 32 : DRV_LCD_V_RES),
+        .buffer_size = DRV_LCD_H_RES * rows,
         .double_buffer = true,
         .flags = { .buff_dma = fast, .buff_spiram = !fast },
     };
@@ -133,9 +148,17 @@ void app_main(void)
     dcfg.lvgl_port_cfg.timer_period_ms = CONFIG_LVGL_PORT_TIMER_PERIOD_MS;
     lv_disp_t *disp = bsp_lvgl_init_with_cfg(&dcfg);
     if (!disp) {
-        ESP_LOGE(TAG, "display init failed");
+        /* no screen, but the installer and the log still work, and the ring
+           glows red so a dark watch is told apart from a dead one */
+        ESP_LOGE(TAG, "display init failed (DMA %u free now)",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+        mx_disp_rows = 0;
+        mx_rgb_start();
+        mx_rgb_set(MX_RGB_CRITICAL);
+        mx_console_start();
         return;
     }
+    mx_disp_rows = rows;
     touch_filter_install();
     bsp_rtc_init();
     mx_rgb_start();
@@ -146,5 +169,7 @@ void app_main(void)
     mx_console_start();
     mx_knob_start(mx_cfg()->knob_invert);
     mx_app_start();
-    ESP_LOGI(TAG, "Maximus OS %s up", MX_FW_VERSION);
+    ESP_LOGI(TAG, "Maximus OS %s up; internal %u free, DMA %u free", MX_FW_VERSION,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
 }

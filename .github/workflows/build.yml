@@ -53,7 +53,7 @@ jobs:
           idf.py build
           # static RAM use, to compare releases when the screen stays dark
           idf.py size
-          idf.py size-components | head -45
+          idf.py size-components > size.txt; head -45 size.txt
       - name: Merge into one image (bootloader + partition table + app)
         shell: bash
         working-directory: firmware/build

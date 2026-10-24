@@ -43,3 +43,5 @@ void mx_console_start(void);
 
 /* why the chip last started: power, restart, crash, watchdog, brownout, ... */
 const char *mx_reset_name(void);
+/* rows per draw buffer the screen got at boot; 0 = display init failed */
+extern int mx_disp_rows;
