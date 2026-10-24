@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <time.h>
 
-#define MX_FW_VERSION "2.0.0"
+#define MX_FW_VERSION "2.1.0"
 
 #include "ui/model.h"
 

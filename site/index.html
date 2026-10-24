@@ -89,7 +89,8 @@ a { color: var(--blue); }
           </esp-web-install-button>
         </div>
       </li>
-      <li><b>Install the camera chip firmware.</b> Wait until the watch has booted, then: <button id="himaxgo">Install camera chip firmware</button>
+      <li><b>Install the camera chip firmware.</b> Close the installer window from step 2 and wait until the watch shows its home screen, then: <button id="himaxgo">Install camera chip firmware</button>
+        <div class="note">The Watcher appears as <b>two</b> serial ports (USB-Enhanced-SERIAL CH342, ports A and B). Pick the first one; if it stays silent the page tries the other by itself.</div>
         <div style="background:#223;border-radius:6px;height:10px;margin:8px 0;overflow:hidden"><div id="himaxbar" style="height:100%;width:0;background:#4da3ff"></div></div>
         <span class="note" id="himaxout">Not started.</span></li>
     </ol>
@@ -98,7 +99,7 @@ a { color: var(--blue); }
       <ol>
         <li>Use a USB-C cable that carries data (some charge-only cables don't).</li>
         <li>If the device was wiped it may not enumerate by itself: <b>hold the knob while plugging in the cable</b>, then press Install.</li>
-        <li>On Windows the first time, Windows may need a moment to install the "USB JTAG/serial debug unit" driver.</li>
+        <li>The Watcher shows up as "USB-Enhanced-SERIAL CH342" (two ports). On Windows the first time it may need a moment to install the driver; if no port appears, install the CH343/CH342 driver from wch-ic.com.</li>
       </ol>
     </details>
     <div class="actions"><button class="secondary" id="installed">I finished installing, continue</button></div>
@@ -301,7 +302,9 @@ class Link {
   constructor(port) { this.port = port; this.lines = []; this.waiters = []; this.buf = ""; }
   async open() {
     await this.port.open({ baudRate: 115200 });
-    try { await this.port.setSignals({ dataTerminalReady: true, requestToSend: false }); } catch (_) {}
+    /* both control lines idle: on the Watcher's CH342 they drive the ESP32's
+       reset and boot pins, and an asserted line can hold it in reset */
+    try { await this.port.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (_) {}
     this.writer = this.port.writable.getWriter();
     this.reader = this.port.readable.getReader();
     this.pump();
@@ -336,6 +339,14 @@ class Link {
       setTimeout(() => { const i = this.waiters.indexOf(w); if (i >= 0) { this.waiters.splice(i, 1); reject(new Error("timeout waiting for " + prefix)); } }, ms);
     });
   }
+  /* pulse the reset line (RTS -> EN) with the boot line released: a normal restart */
+  async reset() {
+    try {
+      await this.port.setSignals({ dataTerminalReady: false, requestToSend: true });
+      await new Promise((r) => setTimeout(r, 120));
+      await this.port.setSignals({ dataTerminalReady: false, requestToSend: false });
+    } catch (_) {}
+  }
   async close() {
     try { await this.reader.cancel(); } catch (_) {}
     try { this.reader.releaseLock(); this.writer.releaseLock(); } catch (_) {}
@@ -343,38 +354,71 @@ class Link {
   }
 }
 
-async function hello(link) {
-  for (let t = 0; t < 20; t++) {
+async function hello(link, tries = 20) {
+  for (let t = 0; t < tries; t++) {
     await link.send("MAXIMUS_HELLO");
     try { return await link.expect("MAXIMUS_READY", 800); } catch (_) { /* retry */ }
   }
   throw new Error("The watch did not answer. Is Maximus OS installed and running?");
 }
 
+/* Ask a port whether Maximus OS is on the other end: a few HELLOs, then one
+   reset (the watch may still be booting or held by the flasher) and more. */
+async function probe(port, note) {
+  const link = new Link(port);
+  try { await link.open(); }
+  catch (e) {
+    note("That port is busy (" + e.message + "). Close the installer window from step 2 and try again.");
+    return null;
+  }
+  try { return { link, ready: await hello(link, 5) }; } catch (_) {}
+  note("No answer yet, restarting the watch...");
+  await link.reset();
+  try { return { link, ready: await hello(link, 14) }; } catch (_) {}
+  await link.close();
+  return null;
+}
+
+/* Find the watch. The Watcher's USB-C has a CH342 bridge with TWO serial
+   ports: one goes to the ESP32-S3 (usually the first, "...A" on Windows),
+   the other to the camera chip. requestPort() must be called before any
+   await in the click handler or Chrome refuses it, so the caller passes the
+   promise in. If the chosen port is silent, every other port this page may
+   use is tried too. */
+async function findWatch(requested, note) {
+  const first = await requested;
+  const info = first.getInfo ? first.getInfo() : {};
+  liveLog("page", "port chosen: USB " + (info.usbVendorId || 0).toString(16) + ":" + (info.usbProductId || 0).toString(16));
+  let r = await probe(first, note);
+  if (r) return r;
+  for (const p of await navigator.serial.getPorts()) {
+    if (p === first) continue;
+    note("Trying the watch's other serial port...");
+    r = await probe(p, note);
+    if (r) return r;
+  }
+  throw new Error("The watch did not answer on any port. Press the button again and pick the other port of the pair (the Watcher shows two). Is Maximus OS installed (step 2)?");
+}
+
 
 /* ---- two-stage install helpers ---- */
-async function openLink() {
-  const port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }] }).catch(() => navigator.serial.requestPort());
-  const link = new Link(port);
-  await link.open();
-  return link;
-}
 $("ident").onclick = async () => {
   const out = $("identout");
   if (!hasSerial) { out.textContent = "Web Serial is not available."; return; }
-  let link;
-  try { link = await openLink(); } catch (e) { out.textContent = "Could not open the port: " + e.message; liveLog("error", e.message); return; }
-  const info = link.port.getInfo ? link.port.getInfo() : {};
+  const req = navigator.serial.requestPort();          /* no await before this line */
+  let port;
+  try { port = await req; } catch (e) { out.textContent = "No port chosen."; return; }
+  const info = port.getInfo ? port.getInfo() : {};
   const usb = info.usbVendorId ? "USB " + info.usbVendorId.toString(16) + ":" + (info.usbProductId || 0).toString(16) : "unknown USB id";
   liveLog("page", "identify: " + usb);
   out.textContent = "Found a device (" + usb + "), asking it who it is...";
-  try {
-    const r = await Promise.race([hello(link), new Promise((_, rej) => setTimeout(() => rej(new Error("no answer")), 6000))]);
-    out.textContent = "Maximus OS is already installed (" + r.replace("MAXIMUS_READY", "").trim() + "). Step 2 will still erase it first.";
-  } catch (_) {
-    out.textContent = (info.usbVendorId === 0x303a ? "ESP32-S3 device detected" : "Device detected") + ", no Maximus OS running yet. Go on with step 2.";
+  const r = await probe(port, (t) => { out.textContent = t; });
+  if (r) {
+    out.textContent = "Maximus OS is already installed (" + r.ready.replace("MAXIMUS_READY", "").trim() + "). Step 2 will still erase it first.";
+    await r.link.close();
+  } else {
+    out.textContent = (info.usbVendorId === 0x1a86 ? "SenseCAP Watcher (CH342 bridge) detected" : "Device detected") + ", no Maximus OS answering on this port. Go on with step 2.";
   }
-  await link.close();
 };
 btn.addEventListener("state-changed", (e) => {
   const st = e.detail && e.detail.state;
@@ -384,11 +428,13 @@ btn.addEventListener("state-changed", (e) => {
 $("himaxgo").onclick = async () => {
   const out = $("himaxout"), bar = $("himaxbar");
   if (!hasSerial) { out.textContent = "Web Serial is not available."; return; }
+  const req = navigator.serial.requestPort();          /* no await before this line */
   let link;
-  try { link = await openLink(); } catch (e) { out.textContent = "Could not open the port: " + e.message; return; }
   try {
-    out.textContent = "Waiting for the watch to boot...";
-    await hello(link);
+    out.textContent = "Looking for the watch...";
+    ({ link } = await findWatch(req, (t) => { out.textContent = t; }));
+  } catch (e) { out.textContent = e.message; liveLog("error", e.message); return; }
+  try {
     await link.send("MAXIMUS_HIMAX_INFO");
     try { const i = await link.expect("MAXIMUS_HIMAX", 8000); liveLog("page", "chip: " + i); } catch (e) { liveLog("page", "chip info: " + e.message); }
     let done = false;
@@ -432,11 +478,10 @@ $("send").onclick = async () => {
   $("send").disabled = true;
   let link;
   try {
-    log("Choose the watch's serial port...");
-    link = new Link(await navigator.serial.requestPort());
-    await link.open();
-    log("Talking to the watch...");
-    const ready = await hello(link);
+    log("Choose the watch's serial port (the first of the two)...");
+    const res = await findWatch(navigator.serial.requestPort(), log);
+    link = res.link;
+    const ready = res.ready;
     chip("stFw", "Firmware " + ready.replace("MAXIMUS_READY", "").trim(), "ok");
     const cfg = {
       ssid: $("ssid").value.trim(), pass: $("pass").value, relay, key: $("key").value.trim(),

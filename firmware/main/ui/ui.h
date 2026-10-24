@@ -30,7 +30,9 @@ typedef enum {
     MX_PAGE_DISPLAY,
     MX_PAGE_TIME,
     MX_PAGE_TIMESET,
+    MX_PAGE_TZ,
     MX_PAGE_CHIP,
+    MX_PAGE_DTEST,
     MX_PAGE_COUNT,
 } mx_page_t;
 
@@ -46,6 +48,7 @@ void ui_camera_frame(void);                     /* a new preview frame is in the
 void ui_gallery_frame(void);                    /* a new picture / video frame is in the model */
 void ui_screen_blank(bool blank);               /* screen timeout: cover the UI, eat the wake-up touch */
 mx_page_t ui_page(void);
+bool ui_overlay_open(void);                     /* app grid, quick panel or a dialog is up */
 
 /* Provided by the host application: called on every user input so it can
    track idleness (dimming, screen timeout). */

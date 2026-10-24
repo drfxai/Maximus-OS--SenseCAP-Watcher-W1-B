@@ -3,6 +3,7 @@
  */
 #include "esp_err.h"
 #include "esp_log.h"
+#include "driver/uart.h"
 #include "driver/usb_serial_jtag.h"
 #include "nvs_flash.h"
 #include "sensecap-watcher.h"
@@ -36,9 +37,15 @@ void app_main(void)
     ESP_ERROR_CHECK(r);
     mx_cfg_load();
 
-    /* line-based console on the USB port, used by the web installer */
+    /* Line-based console for the web installer. The Watcher's USB-C socket
+       reaches the ESP32-S3 through a CH342 USB-serial bridge on UART0, so
+       that is where the installer talks; the chip's own USB port is read
+       too, for boards that wire it out. */
+    uart_driver_install(UART_NUM_0, 1024, 0, 0, NULL, 0);
     usb_serial_jtag_driver_config_t uc = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
     usb_serial_jtag_driver_install(&uc);
+    /* the battery gauge logs every reading at info level */
+    esp_log_level_set("BSP", ESP_LOG_WARN);
 
     bsp_spiffs_init_default();
     bsp_io_expander_init();
