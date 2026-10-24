@@ -110,3 +110,10 @@ The camera chip (Himax WE2) only drives the camera; it has no connection to the 
 ## v2.3.1
 
 - Back to fast drawing by default: the factory drawing mode left the screen white after installing 2.3.0. It stays available under Settings > Display > Drawing for testing, and holding the knob while powering on returns to the fast mode.
+
+## v2.3.2
+
+- **Fixes the white (2.3.0) and black (2.3.1) screen**: the web console's 48 KB log buffer was meant for PSRAM, but the "noinit PSRAM" option it relied on exists only on the original ESP32, so on this chip it landed in internal RAM. That left too little DMA memory for the display. The live log now sits in ordinary PSRAM, and only its last 3 KB are kept across a restart, in RTC memory. Internal RAM use is back to 2.2's level.
+- The draw buffers are sized to the DMA memory that is free (32 rows normally, down to 8), so running short slows drawing down instead of blanking the screen. The serial log prints the memory figures before the display starts, and `MAXIMUS_STATUS` reports `display` (rows, 0 = failed) and `dma_free`.
+- If the display still cannot start, the LED ring turns red and the serial console keeps working.
+- CI prints the firmware's static RAM use (`idf.py size`).

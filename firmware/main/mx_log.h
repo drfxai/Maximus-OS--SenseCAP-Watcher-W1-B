@@ -4,10 +4,10 @@
 #include <stdint.h>
 
 /*
- * Keeps the recent log in a ring buffer for the web console. The buffer lives
- * in PSRAM that a restart does not clear, so after a crash the log from just
- * before it is still there ("previous run"). The crash itself (task, address,
- * backtrace) comes from the core dump partition.
+ * Keeps the recent log in a ring buffer in PSRAM for the web console. Its last
+ * 3 KB are mirrored in RTC memory, which a restart does not clear, so after a
+ * crash the lines from just before it are still there ("previous run"). The
+ * crash itself (task, address, backtrace) comes from the core dump partition.
  */
 void mx_log_init(void);                         /* call first thing in app_main */
 
