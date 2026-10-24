@@ -26,11 +26,10 @@ rm -rf "$dest/components/lvgl"
 git clone -q --depth 1 --branch "$LVGL_TAG" https://github.com/lvgl/lvgl.git "$dest/components/lvgl"
 rm -rf "$dest/components/lvgl/.git"
 printf 'version: "8.4.0"\ndescription: LVGL\n' > "$dest/components/lvgl/idf_component.yml"
-# Upstream bug: sscma_client_types.h guards monitor_task with the PROCESS option
-# and process_task with the MONITOR option (swapped), so sscma_client_ops.c fails
-# to compile when either is enabled. Swap them back.
+# Upstream bug: the *_ALLOC_EXTERNAL guards in sscma_client_types.h and
+# sscma_client_ops.c are mismatched between monitor_task and process_task, so
+# the build breaks whichever option is set. Always declare the static task/stack
+# members so every branch compiles.
 hdr="$dest/components/sscma_client/include/sscma_client_types.h"
-sed -i -e 's/CONFIG_SSCMA_PROCESS_TASK_STACK_ALLOC_EXTERNAL/@@P@@/' \
-       -e 's/CONFIG_SSCMA_MONITOR_TASK_STACK_ALLOC_EXTERNAL/CONFIG_SSCMA_PROCESS_TASK_STACK_ALLOC_EXTERNAL/' \
-       -e 's/@@P@@/CONFIG_SSCMA_MONITOR_TASK_STACK_ALLOC_EXTERNAL/' "$hdr"
+sed -i -e '/^#ifdef CONFIG_SSCMA_\(PROCESS\|MONITOR\)_TASK_STACK_ALLOC_EXTERNAL$/{N;N;N;s/^#ifdef[^\n]*\n\(.*\)\n\(.*\)\n#endif$/\1\n\2/}' "$hdr"
 echo "deps ready in $dest"
