@@ -76,9 +76,10 @@ a { color: var(--blue); }
 
   <section class="card" id="c1">
     <h2><span class="num">1</span> Install the firmware</h2>
-    <p class="sub">Plug the Watcher into your computer with a USB-C <i>data</i> cable, then press the button and pick the Watcher's serial port. This writes the bootloader, partition table and Maximus OS in one go, so it also works on a completely erased device.</p>
+    <p class="sub">Plug the Watcher into your computer with a USB-C <i>data</i> cable, then press the button and pick the Watcher's serial port. This writes the bootloader, partition table and Maximus OS in one go, so it also works on a completely erased device. The device is fully erased first, then the new firmware is written. Nothing to download by hand: the firmware is fetched automatically.</p>
+    <p class="note" id="fwstatus">Checking the firmware file...</p>
     <div class="hero-btn">
-      <esp-web-install-button manifest="manifest.json">
+      <esp-web-install-button manifest="manifest.json" erase-first>
         <button slot="activate">Install Maximus OS</button>
         <span slot="unsupported">Your browser can't flash over USB. Use Chrome or Edge on a computer.</span>
         <span slot="not-allowed">Web Serial needs HTTPS. Open this page from its https:// address.</span>
@@ -149,6 +150,27 @@ a { color: var(--blue); }
 const $ = (id) => document.getElementById(id);
 const hasSerial = "serial" in navigator;
 if (!hasSerial) $("nosupport").style.display = "block";
+
+/* ---- installer manifest: built here from this page's own address so it cannot 404 ---- */
+(async () => {
+  const fwUrl = new URL("firmware/maximus-os-full.bin", location.href);
+  const st = $("fwstatus");
+  try {
+    const r = await fetch(fwUrl, { method: "HEAD", cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const kb = Math.round((Number(r.headers.get("content-length")) || 0) / 1024);
+    st.textContent = "Firmware ready" + (kb ? " (" + kb + " KB)" : "") + ".";
+  } catch (e) {
+    st.textContent = "The firmware file is not on this page yet (" + e.message + "). The site rebuilds after every update; wait a minute, reload with Ctrl+Shift+R, and try again.";
+    st.style.color = "#ff8a80";
+  }
+  const manifest = {
+    name: "Maximus OS", version: "1.0.0", new_install_prompt_erase: false,
+    builds: [{ chipFamily: "ESP32-S3", parts: [{ path: fwUrl.href + "?v=" + Date.now(), offset: 0 }] }],
+  };
+  const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
+  document.querySelector("esp-web-install-button").setAttribute("manifest", URL.createObjectURL(blob));
+})();
 
 /* ---- time zones (IANA label -> POSIX TZ rule the firmware understands) ---- */
 const ZONES = [
