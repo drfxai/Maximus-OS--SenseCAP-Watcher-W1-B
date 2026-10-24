@@ -15,5 +15,5 @@ idf_component_register(
         "ui/assets.c"
     INCLUDE_DIRS "." "ui"
     PRIV_REQUIRES nvs_flash esp_wifi esp_netif esp_event esp_http_client esp-tls mbedtls json
-                  spiffs driver esp_timer esp_hw_support esp_system esp_driver_usb_serial_jtag vfs
+                  spiffs driver esp_timer esp_hw_support esp_system vfs
 )
