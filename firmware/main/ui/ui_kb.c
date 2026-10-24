@@ -38,6 +38,8 @@ struct ui_kb {
     int down;               /* key under the finger, -1 = none */
     int sel;                /* knob highlight */
     bool rep_fired;
+    uint32_t up_t;          /* when the last key was released */
+    bool bounce;            /* this press is being ignored */
 };
 
 #define K(c) { UI_KEY_CHAR, c, 1 }
@@ -259,6 +261,9 @@ static void area_cb(lv_event_t *e)
     if (in) lv_indev_get_point(in, &p);
     if (code == LV_EVENT_PRESSED) {
         mx_activity();
+        /* a press this soon after a release is the same finger bouncing */
+        kb->bounce = lv_tick_elaps(kb->up_t) < 90;
+        if (kb->bounce) return;
         int i = hit(kb, p);
         set_down(kb, i);
         if (i >= 0 && kb->def[i].kind == UI_KEY_BKSP) {
@@ -269,6 +274,8 @@ static void area_cb(lv_event_t *e)
             lv_timer_reset(kb->rep);
             lv_timer_resume(kb->rep);
         }
+    } else if (kb->bounce) {
+        if (code != LV_EVENT_PRESSING) kb->bounce = false;
     } else if (code == LV_EVENT_PRESSING) {
         int i = hit(kb, p);
         if (kb->down >= 0 && kb->def[kb->down].kind == UI_KEY_BKSP) return;   /* stay on backspace */
@@ -277,6 +284,7 @@ static void area_cb(lv_event_t *e)
         int i = kb->down;
         lv_timer_pause(kb->rep);
         set_down(kb, -1);
+        if (i >= 0) kb->up_t = lv_tick_get();
         if (i >= 0 && kb->def[i].kind != UI_KEY_BKSP) {
             kb->sel = i;
             emit(kb, i);

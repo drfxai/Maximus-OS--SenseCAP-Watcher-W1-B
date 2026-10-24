@@ -145,10 +145,20 @@ static void show_frame(const mx_frame_t *f)
     s_cam_front = back;
 }
 
+/* Moves what the microphone heard since the last frame into the video. */
+static void rec_audio(void)
+{
+    static int16_t pcm[1600];                    /* 100 ms */
+    size_t n;
+    while (s_avi && (n = mx_audio_capture_take(pcm, sizeof pcm / sizeof *pcm)) > 0) mx_avi_add_audio(s_avi, pcm, n);
+}
+
 static void rec_stop(bool announce)
 {
     if (!s_avi) return;
     uint32_t elapsed = (uint32_t)(now_ms() - s_rec_start_ms);
+    mx_audio_capture_end();
+    rec_audio();
     uint32_t frames = mx_avi_frames(s_avi);
     size_t bytes = mx_avi_bytes(s_avi);
     bool ok = mx_avi_close(s_avi, elapsed);
@@ -158,7 +168,7 @@ static void rec_stop(bool announce)
         M->cam_rec = false;
         lvgl_port_unlock();
     }
-    mx_audio_beep(700, 60);
+    mx_audio_sound(MX_SND_REC_STOP);
     if (announce) {
         if (ok && frames) toast("Saved %s", strrchr(s_rec_path, '/') + 1);
         else toast("Video could not be saved");
@@ -174,15 +184,18 @@ static void rec_start(void)
         return;
     }
     if (!mx_sd_next_name("VID", "AVI", s_rec_path, sizeof s_rec_path)) return;
-    s_avi = mx_avi_open(s_rec_path, PREVIEW_W, PREVIEW_H);
+    /* the start sound plays before the microphone opens, so it is not in the video */
+    mx_audio_sound(MX_SND_REC_START);
+    mx_audio_wait(500);
+    s_avi = mx_avi_open(s_rec_path, PREVIEW_W, PREVIEW_H, true);
     if (!s_avi) {
         toast("Cannot write to the card");
         mx_audio_chime(2);
         return;
     }
+    mx_audio_capture_begin();
     s_rec_start_ms = now_ms();
     s_rec = true;
-    mx_audio_beep(1400, 60);
     if (lvgl_port_lock(0)) {
         M->cam_rec = true;
         M->cam_rec_s = 0;
@@ -200,7 +213,7 @@ static void take_photo(void)
     char path[48];
     if (!mx_sd_next_name("IMG", "JPG", path, sizeof path)) return;
     set_cam_state(MX_CAM_BUSY);
-    mx_audio_beep(1800, 40);
+    mx_audio_sound(MX_SND_SHUTTER);
     if (lvgl_port_lock(0)) {
         M->cam_flash++;
         lvgl_port_unlock();
@@ -257,9 +270,12 @@ static void preview_step(void)
     if (M->cam_state != MX_CAM_LIVE) { vTaskDelay(pdMS_TO_TICKS(50)); return; }
     if (mx_camera_next(&f, 120)) {
         s_last_frame_ms = t;
-        if (s_rec && s_avi && !mx_avi_add(s_avi, f.jpeg, f.len)) {
-            rec_stop(true);
-            toast("Card full or removed");
+        if (s_rec && s_avi) {
+            if (mx_avi_add(s_avi, f.jpeg, f.len)) rec_audio();
+            else {
+                rec_stop(true);
+                toast("Card full or removed");
+            }
         }
         /* while recording, decoding every frame would make the queue drop some */
         static int64_t last_show;
@@ -447,8 +463,15 @@ static void gal_play(void)
     s_stop_play = false;
     if (lvgl_port_lock(0)) { M->gal_playing = true; lvgl_port_unlock(); }
     int cur = 0;
-    int64_t next = now_ms();
-    while (!s_stop_play && buf[0] && buf[1] && (len = mx_avi_rd_next(r, &jpeg, &cap)) > 0) {
+    bool sound = mx_avi_rd_has_audio(r) && mx_audio_stream_begin();
+    /* the speaker holds back 150 ms of sound before it starts; the picture waits as long */
+    int64_t next = now_ms() + (sound ? 150 : 0);
+    bool is_audio = false;
+    while (!s_stop_play && buf[0] && buf[1] && (len = mx_avi_rd_chunk(r, &jpeg, &cap, &is_audio)) > 0) {
+        if (is_audio) {
+            if (sound) mx_audio_stream_push((const int16_t *)jpeg, len / 2, 300);
+            continue;
+        }
         int dw, dh;
         if (!mx_jpeg_decode(jpeg, len, (uint8_t *)buf[cur], (size_t)w * h * 2, &dw, &dh)) continue;
         if (lvgl_port_lock(0)) {
@@ -464,6 +487,7 @@ static void gal_play(void)
         if (wait > 0) vTaskDelay(pdMS_TO_TICKS(wait));
         else next = now_ms();                     /* behind: do not try to catch up */
     }
+    if (sound) mx_audio_stream_end(!s_stop_play);
     mx_avi_rd_close(r);
     free(jpeg);
     /* back to the still first frame, which also releases the playback buffers */

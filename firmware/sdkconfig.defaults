@@ -63,12 +63,13 @@ CONFIG_LV_FONT_MONTSERRAT_48=y
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_16=y
 CONFIG_LV_USE_SHADOW=y
 CONFIG_LV_USE_TEXTAREA=y
-# smoother gradients and glows on a 16-bit panel
-CONFIG_LV_DITHER_GRADIENT=y
-CONFIG_LV_DITHER_ERROR_DIFFUSION=y
-# fastest redraw and touch polling LVGL allows
-CONFIG_LV_DISP_DEF_REFR_PERIOD=10
-CONFIG_LV_INDEV_DEF_READ_PERIOD=10
+# No gradient dithering (the factory firmware has none): the error diffusion
+# pattern showed as fine vertical streaks on gradients.
+CONFIG_LV_DITHER_GRADIENT=n
+# ~60 fps redraw; touch read every 20 ms, which the touch controller keeps up
+# with (every 10 ms it repeated stale or glitched points)
+CONFIG_LV_DISP_DEF_REFR_PERIOD=16
+CONFIG_LV_INDEV_DEF_READ_PERIOD=20
 CONFIG_LV_INDEV_DEF_SCROLL_LIMIT=8
 CONFIG_LV_INDEV_DEF_GESTURE_LIMIT=40
 CONFIG_LV_INDEV_DEF_GESTURE_MIN_VELOCITY=2
@@ -83,6 +84,8 @@ CONFIG_BSP_LCD_SPI_DMA_SIZE_DIV=16
 CONFIG_LVGL_PORT_TASK_PRIORITY=11
 CONFIG_LVGL_PORT_TASK_AFFINITY_CPU1=y
 CONFIG_LVGL_PORT_TASK_STACK_ALLOC_EXTERNAL=y
+# the default 10 KB was close to full on the busiest screens
+CONFIG_LVGL_PORT_TASK_STACK_SIZE=16384
 CONFIG_LVGL_PORT_TASK_MAX_SLEEP_MS=2
 CONFIG_LVGL_PORT_TIMER_PERIOD_MS=2
 # Maximus handles the knob itself (rotate/confirm/5 s/10 s); touch stays on LVGL

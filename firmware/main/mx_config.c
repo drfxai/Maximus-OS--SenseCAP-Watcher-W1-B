@@ -29,7 +29,8 @@ static void defaults(void)
     memset(&C, 0, sizeof C);
     strlcpy(C.tz, "UTC0", sizeof C.tz);
     strlcpy(C.symbols, "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT", sizeof C.symbols);
-    C.brightness = 80;
+    C.brightness = 100;   /* full backlight: no PWM, so no bands (factory default) */
+    C.bl_freq = 2;
     C.volume = 70;
     C.wifi_enabled = true;
     C.auto_time = true;
@@ -62,7 +63,13 @@ void mx_cfg_load(void)
     if (nvs_get_u8(h, "cam_video", &b) == ESP_OK) C.cam_video = b;
     nvs_get_u8(h, "timeout", &C.timeout_idx);
     nvs_get_u8(h, "disp_speed", &C.disp_speed);
-    nvs_get_u8(h, "bl_freq", &C.bl_freq);
+    /* v2.2 moved the backlight to 40 kHz and full brightness and the panel back
+       to its normal speed; settings saved by older versions start from those */
+    if (nvs_get_u8(h, "blf", &C.bl_freq) != ESP_OK) {
+        C.bl_freq = 2;
+        C.brightness = 100;
+        C.disp_speed = 0;
+    }
     n = sizeof C.pin_hash;
     if (nvs_get_blob(h, "pin", C.pin_hash, &n) == ESP_OK && n == sizeof C.pin_hash) C.pin_set = true;
     nvs_close(h);
@@ -71,7 +78,7 @@ void mx_cfg_load(void)
     if (C.volume > 100) C.volume = 100;
     if (C.timeout_idx > 2) C.timeout_idx = 1;
     if (C.disp_speed > 1) C.disp_speed = 0;
-    if (C.bl_freq > 2) C.bl_freq = 0;
+    if (C.bl_freq > 2) C.bl_freq = 2;
 }
 
 void mx_cfg_save(void)
@@ -95,7 +102,7 @@ void mx_cfg_save(void)
     nvs_set_u8(h, "cam_video", C.cam_video);
     nvs_set_u8(h, "timeout", C.timeout_idx);
     nvs_set_u8(h, "disp_speed", C.disp_speed);
-    nvs_set_u8(h, "bl_freq", C.bl_freq);
+    nvs_set_u8(h, "blf", C.bl_freq);
     if (C.pin_set) nvs_set_blob(h, "pin", C.pin_hash, sizeof C.pin_hash);
     else nvs_erase_key(h, "pin");
     nvs_commit(h);
@@ -158,13 +165,29 @@ static void sets(char *dst, size_t cap, cJSON *j, const char *key)
     if (cJSON_IsString(v) && v->valuestring) strlcpy(dst, v->valuestring, cap);
 }
 
+const char *mx_reset_name(void)
+{
+    switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return "power";
+    case ESP_RST_SW:       return "restart";
+    case ESP_RST_PANIC:    return "crash";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:      return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_DEEPSLEEP: return "sleep";
+    case ESP_RST_EXT:      return "reset pin";
+    default:               return "other";
+    }
+}
+
 static void status_line(void)
 {
     mx_net_status_t st;
     mx_net_status(&st);
-    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\"}\n",
+    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\",\"reset\":\"%s\"}\n",
            MX_FW_VERSION, st.wifi ? "true" : "false", st.ip, st.relay_ok ? "true" : "false",
-           mx_cfg_configured() ? "true" : "false", C.ssid);
+           mx_cfg_configured() ? "true" : "false", C.ssid, mx_reset_name());
 }
 
 static void handle_line(char *line)

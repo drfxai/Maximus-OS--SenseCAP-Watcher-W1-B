@@ -88,3 +88,14 @@ Built on Seeed Studio's [SenseCAP Watcher firmware SDK](https://github.com/Seeed
 - **Display**: test patterns (Settings > Display > Test patterns) and a backlight frequency option (5 / 20 / 40 kHz). Bands that show up only in phone photos of the screen usually come from the backlight PWM; a higher frequency should remove them.
 
 The camera chip firmware is Seeed's stock SSCMA image (Apache-2.0, from Seeed-Studio/SenseCAP-Watcher-Firmware), fetched by `tools/fetch-deps.sh` and bundled; Maximus OS does not ship its own Himax firmware. Features are untested on real hardware at the time of writing.
+
+## v2.2
+
+- **Display matched to the factory firmware**: full brightness and a 40 kHz backlight by default (the backlight no longer pulses at 5 kHz, which shows as bands), gradient dithering off (its error-diffusion pattern can look like fine vertical streaks), and the panel back at its normal speed. Settings saved by older versions move to these values once.
+- **Touch**: a filter between the touch controller and the UI ignores short "finger lifted" drop-outs and single misread points. Those made one tap type several letters, and could turn a tap into a swipe that left the page. The keyboard also ignores a second press within 90 ms of a release.
+- **Restarts are reported**: after a crash, watchdog or brownout the watch adds a "Restarted" note, and `MAXIMUS_STATUS` says why it last started.
+- **Video sound**: videos record the microphone as a 16 kHz PCM track next to the MJPEG frames, and the gallery plays it back. Older silent videos still play.
+- **LED ring**: green while charging, blue when full, red below 30 % on battery, soft blue while the Assistant is open, three blue blinks for a notification on battery (a steady blue glow on the charger).
+- **Sounds**: new synthesized chimes (glass and marimba style) for notifications, assistant replies, charger in and out, microphone on and off, camera, errors and power off. They play in the background, so the UI no longer waits for them.
+
+The camera chip (Himax WE2) only drives the camera; it has no connection to the display, so it cannot improve screen quality.
