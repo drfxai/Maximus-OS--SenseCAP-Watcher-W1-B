@@ -37,7 +37,11 @@ static void defaults(void)
     strlcpy(C.symbols, "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT", sizeof C.symbols);
     C.brightness = 100;   /* full backlight: no PWM, so no bands (factory default) */
     C.bl_freq = 2;
-    C.draw_mode = 1;      /* fast: factory drawing gave a white screen in 2.3.0 */
+    /* factory drawing (frames in PSRAM). The fast mode's two 26 KB buffers in
+       internal RAM left Wi-Fi, the hotspot and Bluetooth without room to
+       start in 2.3.3; the white screen factory drawing gave in 2.3.0 was the
+       web log, moved out in 2.3.2 */
+    C.draw_mode = 0;
     C.volume = 70;
     C.wifi_enabled = true;
     C.auto_time = true;
@@ -71,7 +75,7 @@ void mx_cfg_load(void)
     if (nvs_get_u8(h, "cam_video", &b) == ESP_OK) C.cam_video = b;
     nvs_get_u8(h, "timeout", &C.timeout_idx);
     nvs_get_u8(h, "disp_speed", &C.disp_speed);
-    nvs_get_u8(h, "draw2", &C.draw_mode);
+    nvs_get_u8(h, "draw3", &C.draw_mode);
     if (nvs_get_u8(h, "web_on", &b) == ESP_OK) C.web_on = b;
     n = sizeof C.web_pass;
     nvs_get_str(h, "web_pass", C.web_pass, &n);
@@ -90,7 +94,7 @@ void mx_cfg_load(void)
     if (C.volume > 100) C.volume = 100;
     if (C.timeout_idx > 2) C.timeout_idx = 1;
     if (C.disp_speed > 1) C.disp_speed = 0;
-    if (C.draw_mode > 1) C.draw_mode = 1;
+    if (C.draw_mode > 1) C.draw_mode = 0;
     if (C.bl_freq > 2) C.bl_freq = 2;
 }
 
@@ -115,7 +119,7 @@ static void cfg_write(void)
     nvs_set_u8(h, "cam_video", C.cam_video);
     nvs_set_u8(h, "timeout", C.timeout_idx);
     nvs_set_u8(h, "disp_speed", C.disp_speed);
-    nvs_set_u8(h, "draw2", C.draw_mode);
+    nvs_set_u8(h, "draw3", C.draw_mode);
     nvs_set_u8(h, "web_on", C.web_on);
     nvs_set_str(h, "web_pass", C.web_pass);
     nvs_set_u8(h, "blf", C.bl_freq);
@@ -240,10 +244,12 @@ static void status_line(void)
 {
     mx_net_status_t st;
     mx_net_status(&st);
-    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\",\"reset\":\"%s\",\"display\":%d,\"dma_free\":%u}\n",
+    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\",\"reset\":\"%s\",\"display\":%d,\"dma_free\":%u,\"internal_free\":%u,\"internal_min\":%u,\"radio_err\":\"%s\"}\n",
            MX_FW_VERSION, st.wifi ? "true" : "false", st.ip, st.relay_ok ? "true" : "false",
            mx_cfg_configured() ? "true" : "false", C.ssid, mx_reset_name(), mx_disp_rows,
-           (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), mx_radio_err);
 }
 
 static void handle_line(char *line)
