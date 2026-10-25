@@ -22,6 +22,7 @@
 #include "mx_camera.h"
 #include "mx_himax.h"
 #include "mx_net.h"
+#include "mx_panel.h"
 
 static const char *TAG = "cfg";
 static SemaphoreHandle_t s_save_go, s_save_done, s_save_lock;
@@ -244,12 +245,15 @@ static void status_line(void)
 {
     mx_net_status_t st;
     mx_net_status(&st);
-    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\",\"reset\":\"%s\",\"display\":%d,\"dma_free\":%u,\"internal_free\":%u,\"internal_min\":%u,\"radio_err\":\"%s\"}\n",
+    mx_panel_stats_t ps;
+    mx_panel_stats(&ps);
+    printf("MAXIMUS_STATUS {\"fw\":\"%s\",\"wifi\":%s,\"ip\":\"%s\",\"relay\":%s,\"configured\":%s,\"ssid\":\"%s\",\"reset\":\"%s\",\"display\":%d,\"dma_free\":%u,\"internal_free\":%u,\"internal_min\":%u,\"radio_err\":\"%s\",\"draws\":%u,\"draw_errors\":%u,\"draw_err\":\"%s\",\"draw_idle_s\":%u}\n",
            MX_FW_VERSION, st.wifi ? "true" : "false", st.ip, st.relay_ok ? "true" : "false",
            mx_cfg_configured() ? "true" : "false", C.ssid, mx_reset_name(), mx_disp_rows,
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), mx_radio_err);
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), mx_radio_err,
+           (unsigned)ps.draws, (unsigned)ps.errors, ps.errors ? esp_err_to_name(ps.last_err) : "", (unsigned)ps.idle_s);
 }
 
 static void handle_line(char *line)
@@ -293,6 +297,9 @@ static void handle_line(char *line)
         printf("MAXIMUS_HIMAX_START\n");
         fflush(stdout);
         mx_app_chip_install(true);
+    } else if (strncmp(line, "MAXIMUS_PANEL_RESTART", 21) == 0) {
+        printf(mx_panel_restart() ? "MAXIMUS_OK\n" : "MAXIMUS_ERR panel restart failed\n");
+        status_line();
     } else if (strncmp(line, "MAXIMUS_FACTORY_RESET", 21) == 0) {
         nvs_flash_erase();
         printf("MAXIMUS_OK\n");

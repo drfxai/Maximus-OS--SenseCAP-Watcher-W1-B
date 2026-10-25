@@ -159,6 +159,7 @@ a { color: var(--blue); }
       <button class="secondary" id="logsave">Save as file</button>
       <button class="secondary" id="logclear">Clear</button>
       <button class="secondary" id="logdev">Watch device log</button>
+      <button class="secondary" id="panelfix">Restart watch screen</button>
     </div>
     <div class="log" id="livelog" aria-live="polite" style="max-height:320px;min-height:120px"></div>
   </section>
@@ -400,6 +401,21 @@ async function findWatch(requested, note) {
   throw new Error("The watch did not answer on any port. Press the button again and pick the other port of the pair (the Watcher shows two). Is Maximus OS installed (step 2)?");
 }
 
+
+/* Screen gone white with the watch still running: send the panel its
+   power-on setup again. The status line before and after goes to the log. */
+$("panelfix").onclick = async () => {
+  if (!hasSerial) return liveLog("error", "Web Serial is not available in this browser");
+  let port;
+  try { port = await navigator.serial.requestPort(); } catch (e) { return liveLog("page", "no port chosen"); }
+  const r = await probe(port, (t) => liveLog("page", t));
+  if (!r) return liveLog("error", "the watch did not answer on this port; try the other one of the pair");
+  try {
+    await r.link.send("MAXIMUS_STATUS"); await r.link.expect("MAXIMUS_STATUS", 2500);
+    await r.link.send("MAXIMUS_PANEL_RESTART"); await r.link.expect("MAXIMUS_STATUS", 5000);
+  } catch (e) { liveLog("error", "screen restart: " + e.message); }
+  await r.link.close();
+};
 
 /* ---- two-stage install helpers ---- */
 $("ident").onclick = async () => {
