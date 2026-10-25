@@ -133,3 +133,7 @@ The camera chip (Himax WE2) only drives the camera; it has no connection to the 
 ## v2.3.5
 
 - Looking into a screen that turns white after a few minutes while the watch keeps running. The status line now counts what is sent to the panel (`draws`, `draw_errors`, `draw_err`, `draw_idle_s`). The installer's **Restart watch screen** button (Live log) sends the panel its power-on setup again and redraws, without restarting the watch.
+
+## v2.3.6
+
+- **White screen after a few minutes.** Since 2.3.3 an idle page sends the panel nothing at all. On 2.3.5 the status line showed one picture sent since boot. A few minutes without any transfer is when the panel turned white, while the watch itself kept running. The factory firmware animates constantly, so its panel is never idle. The watch now resends the whole picture after 5 s with nothing sent (`mx_panel.c`). That is one transfer every 5 s on a still page, against five a second before 2.3.3.

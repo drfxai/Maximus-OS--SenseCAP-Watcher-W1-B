@@ -38,6 +38,25 @@ void mx_panel_stats(mx_panel_stats_t *out)
     out->idle_s = s_last_us ? (uint32_t)((esp_timer_get_time() - s_last_us) / 1000000) : 0;
 }
 
+/* Since 2.3.3 an idle page sends nothing at all, and after a few minutes
+   without a transfer the panel turned white while the watch ran on (one
+   picture sent since boot). Factory firmware animates all the time, so it
+   never left the panel idle. Resend the whole picture after 5 s of quiet. */
+#define KEEPALIVE_US (5 * 1000 * 1000)
+
+static void keepalive_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (esp_timer_get_time() - s_last_us >= KEEPALIVE_US) lv_obj_invalidate(lv_scr_act());
+}
+
+void mx_panel_keepalive_start(void)
+{
+    if (!lvgl_port_lock(0)) return;
+    lv_timer_create(keepalive_cb, 1000, NULL);
+    lvgl_port_unlock();
+}
+
 bool mx_panel_restart(void)
 {
     esp_lcd_panel_handle_t p = bsp_lcd_get_panel_handle();
