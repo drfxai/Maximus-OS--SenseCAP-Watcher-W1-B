@@ -129,3 +129,7 @@ The camera chip (Himax WE2) only drives the camera; it has no connection to the 
 
 - **Wi-Fi, web console and Bluetooth start again.** The installer erases the watch, so 2.3.3 came up in the "fast" drawing mode, whose two draw buffers take about 52 KB of internal RAM. That left too little for the Wi-Fi hotspot and the Bluetooth controller. Factory drawing (full frames in PSRAM, like Seeed's firmware) is now the default, and every watch switches to it once (new setting key). Fast drawing is still under Display, marked as possibly stopping the radios. Holding the knob at power-on goes back to factory drawing and normal panel speed.
 - A Wi-Fi, hotspot or Bluetooth start that fails is logged with the free internal RAM. The installer's status line shows the last failure (`radio_err`) and the free and lowest internal RAM.
+
+## v2.3.5
+
+- Looking into a screen that turns white after a few minutes while the watch keeps running. The status line now counts what is sent to the panel (`draws`, `draw_errors`, `draw_err`, `draw_idle_s`). The installer's **Restart watch screen** button (Live log) sends the panel its power-on setup again and redraws, without restarting the watch.
