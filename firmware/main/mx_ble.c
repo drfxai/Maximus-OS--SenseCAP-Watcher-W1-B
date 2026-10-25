@@ -1,5 +1,6 @@
 #include <string.h>
 #include "mx_ble.h"
+#include "mx_net.h"
 
 #include "esp_log.h"
 #include "host/ble_hs.h"
@@ -69,8 +70,9 @@ bool mx_ble_set(bool on)
 {
     if (on == s_on) return true;
     if (on) {
-        if (nimble_port_init() != ESP_OK) {
-            ESP_LOGW(TAG, "controller did not start");
+        esp_err_t r = nimble_port_init();
+        if (r != ESP_OK) {
+            mx_radio_failed("bluetooth", r);
             return false;
         }
         ble_hs_cfg.sync_cb = on_sync;

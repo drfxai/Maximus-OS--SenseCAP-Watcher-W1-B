@@ -121,18 +121,18 @@ void app_main(void)
 
     /* A picture that comes out garbled at Turbo speed can be undone without a
        working screen: hold the knob while powering on. */
-    if ((mx_cfg()->disp_speed || mx_cfg()->draw_mode != 1) && bsp_exp_io_get_level(BSP_KNOB_BTN) == 0) {
+    if ((mx_cfg()->disp_speed || mx_cfg()->draw_mode) && bsp_exp_io_get_level(BSP_KNOB_BTN) == 0) {
         ESP_LOGW(TAG, "knob held at boot: display speed back to normal");
         mx_cfg()->disp_speed = 0;
-        mx_cfg()->draw_mode = 1;
+        mx_cfg()->draw_mode = 0;
         mx_cfg_save();
     }
 
-    /* Fast drawing (the default) uses two small buffers in internal DMA
-       memory, the same as 2.2. In 2.3.0 and 2.3.1 the web log took 48 KB of
-       that memory and the screen stayed white, then black. The buffers are
-       sized to what is free, down to 8 rows, so a squeeze costs speed and
-       not the picture; factory drawing (full frames in PSRAM) stays opt-in. */
+    /* Factory drawing (the default) keeps two full frames in PSRAM; the SPI
+       driver copies each piece through a small internal buffer. Fast drawing
+       puts two buffers in internal DMA memory, sized to what is free, down to
+       8 rows. They took about 52 KB, and in 2.3.3 Wi-Fi, the web console's
+       hotspot and Bluetooth then had too little left to start. */
     bool fast = mx_cfg()->draw_mode == 1;
     size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     size_t dma_big = heap_caps_get_largest_free_block(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);

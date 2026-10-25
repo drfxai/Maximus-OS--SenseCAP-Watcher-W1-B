@@ -1,5 +1,6 @@
 #include "mx_net.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
@@ -75,6 +76,24 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
+char mx_radio_err[48];
+
+void mx_radio_failed(const char *what, int err)
+{
+    snprintf(mx_radio_err, sizeof mx_radio_err, "%s: %s", what, esp_err_to_name(err));
+    ESP_LOGE(TAG, "%s failed: %s; internal %u free (largest %u)", what, esp_err_to_name(err),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
+
+/* esp_wifi_start, logged when it fails */
+static esp_err_t wifi_start(const char *why)
+{
+    esp_err_t r = esp_wifi_start();
+    if (r != ESP_OK) mx_radio_failed(why, r);
+    return r;
+}
+
 static void sntp_cb(struct timeval *tv)
 {
     ESP_LOGI(TAG, "time synced");
@@ -100,7 +119,7 @@ void mx_net_start(void)
     wc.sta.threshold.authmode = mx_cfg()->pass[0] ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     s_enabled = mx_cfg()->wifi_enabled;
-    if (s_enabled) ESP_ERROR_CHECK(esp_wifi_start());
+    if (s_enabled) wifi_start("wifi start");
 
     mx_net_apply_tz();
     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
@@ -131,7 +150,7 @@ void mx_wifi_enable(bool on)
     s_connecting = s_failed = false;
     if (on) {
         s_retry = 0;
-        esp_wifi_start();
+        wifi_start("wifi on");
         /* already running for the hotspot: no start event will come to connect */
         if (s_ap_on && mx_cfg()->ssid[0]) { s_connecting = true; esp_wifi_connect(); }
     } else {
@@ -146,7 +165,8 @@ bool mx_net_ap(bool on, const char *ssid, const char *pass)
     if (!s_started) return false;
     if (on) {
         if (!s_ap_netif) s_ap_netif = esp_netif_create_default_wifi_ap();
-        if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK) return false;
+        esp_err_t r = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (r != ESP_OK) { mx_radio_failed("hotspot mode", r); return false; }
         wifi_config_t ac = { 0 };
         strlcpy((char *)ac.ap.ssid, ssid, sizeof ac.ap.ssid);
         ac.ap.ssid_len = strlen(ssid);
@@ -154,8 +174,8 @@ bool mx_net_ap(bool on, const char *ssid, const char *pass)
         ac.ap.authmode = WIFI_AUTH_WPA2_PSK;
         ac.ap.max_connection = 3;
         ac.ap.channel = 6;
-        if (esp_wifi_set_config(WIFI_IF_AP, &ac) != ESP_OK) return false;
-        if (!s_enabled) esp_wifi_start();
+        if ((r = esp_wifi_set_config(WIFI_IF_AP, &ac)) != ESP_OK) { mx_radio_failed("hotspot config", r); return false; }
+        if (!s_enabled && wifi_start("hotspot") != ESP_OK) return false;
         s_ap_on = true;
     } else if (s_ap_on) {
         s_ap_on = false;

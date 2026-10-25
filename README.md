@@ -124,3 +124,8 @@ The camera chip (Himax WE2) only drives the camera; it has no connection to the 
 - Redraw at about 33 fps, like Seeed's firmware, instead of 60: an animation sends half as many frames.
 - **Internal RAM**: LVGL's objects, about 6,700 small blocks for the Maximus pages, now live in PSRAM (`CONFIG_LV_MEM_CUSTOM_INCLUDE`, header written by `tools/fetch-deps.sh`). 2.3.2 ran down to 3 KB of free internal RAM. The boot log prints the free internal RAM after each start-up step.
 - The web console answers `/favicon.ico`, so browsers no longer leave a 404 in the log.
+
+## v2.3.4
+
+- **Wi-Fi, web console and Bluetooth start again.** The installer erases the watch, so 2.3.3 came up in the "fast" drawing mode, whose two draw buffers take about 52 KB of internal RAM. That left too little for the Wi-Fi hotspot and the Bluetooth controller. Factory drawing (full frames in PSRAM, like Seeed's firmware) is now the default, and every watch switches to it once (new setting key). Fast drawing is still under Display, marked as possibly stopping the radios. Holding the knob at power-on goes back to factory drawing and normal panel speed.
+- A Wi-Fi, hotspot or Bluetooth start that fails is logged with the free internal RAM. The installer's status line shows the last failure (`radio_err`) and the free and lowest internal RAM.

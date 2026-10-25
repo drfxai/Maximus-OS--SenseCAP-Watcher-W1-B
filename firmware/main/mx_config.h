@@ -22,7 +22,7 @@ typedef struct {
     uint8_t disp_speed; /* 0 = normal (40 MHz pixel clock), 1 = turbo (80 MHz) */
     bool web_on;        /* web console hotspot */
     char web_pass[12];  /* its WPA2 password, made up on first use */
-    uint8_t draw_mode;  /* 0 = factory full-frame buffers in PSRAM, 1 = 32-row buffers in internal RAM (default) */
+    uint8_t draw_mode;  /* 0 = factory full-frame buffers in PSRAM (default), 1 = 32-row buffers in internal RAM */
     uint8_t bl_freq;    /* backlight PWM: 0 = 5 kHz (factory), 1 = 20 kHz, 2 = 40 kHz (default) */
     bool cam_video;     /* camera opens in video mode */
     bool pin_set;
