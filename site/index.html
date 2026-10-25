@@ -415,6 +415,8 @@ $("ident").onclick = async () => {
   const r = await probe(port, (t) => { out.textContent = t; });
   if (r) {
     out.textContent = "Maximus OS is already installed (" + r.ready.replace("MAXIMUS_READY", "").trim() + "). Step 2 will still erase it first.";
+    /* the status line (restart reason, memory, radio errors) goes to the live log */
+    try { await r.link.send("MAXIMUS_STATUS"); await r.link.expect("MAXIMUS_STATUS", 2500); } catch (_) { liveLog("page", "no status answer"); }
     await r.link.close();
   } else {
     out.textContent = (info.usbVendorId === 0x1a86 ? "SenseCAP Watcher (CH342 bridge) detected" : "Device detected") + ", no Maximus OS answering on this port. Go on with step 2.";
