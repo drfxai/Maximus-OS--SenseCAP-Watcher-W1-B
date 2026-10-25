@@ -54,6 +54,15 @@ jobs:
           # static RAM use, to compare releases when the screen stays dark
           idf.py size
           idf.py size-components > size.txt; head -45 size.txt
+          # the first 9 hex digits match "ELF file SHA256" in a crash report
+          sha256sum build/*.elf
+      - name: Decode crash backtraces (tools/backtrace.txt, if present)
+        if: hashFiles('tools/backtrace.txt') != ''
+        shell: bash
+        working-directory: firmware
+        run: |
+          . $IDF_PATH/export.sh
+          grep -oE '0x4[0-9a-f]{7}' ../tools/backtrace.txt | sort -u | xargs xtensa-esp32s3-elf-addr2line -pfiaC -e build/maximus_os.elf
       - name: Merge into one image (bootloader + partition table + app)
         shell: bash
         working-directory: firmware/build
