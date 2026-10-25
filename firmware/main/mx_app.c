@@ -651,6 +651,11 @@ static void app_task(void *arg)
             case CMD_WIFI_JOIN: mx_wifi_join(c.s1, c.s2); break;
             case CMD_WIFI_FORGET: mx_wifi_forget(); break;
             case CMD_BT: {
+                /* saved off until it starts, so a crash while starting is not repeated on every boot */
+                if (c.arg && !mx_ble_on()) {
+                    mx_cfg()->bt_enabled = false;
+                    mx_cfg_save();
+                }
                 bool ok = mx_ble_set(c.arg);
                 mx_cfg()->bt_enabled = ok ? c.arg : mx_ble_on();
                 mx_cfg_save();
@@ -822,7 +827,9 @@ void mx_app_start(void)
     s_cmdq = xQueueCreate(8, sizeof(cmd_t));
     mx_sd_start();
     mx_media_start(&M);
-    if (c->bt_enabled) send_cmd_arg(CMD_BT, 1, NULL, NULL);
+    /* after a crash, leave Bluetooth off: starting it may be what crashed */
+    bool crashed = !strcmp(mx_reset_name(), "crash") || !strcmp(mx_reset_name(), "watchdog");
+    if (c->bt_enabled && !crashed) send_cmd_arg(CMD_BT, 1, NULL, NULL);
 
     lvgl_port_lock(0);
     ui_init(&M, &ACTIONS);

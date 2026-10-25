@@ -134,6 +134,11 @@ The camera chip (Himax WE2) only drives the camera; it has no connection to the 
 
 - Looking into a screen that turns white after a few minutes while the watch keeps running. The status line now counts what is sent to the panel (`draws`, `draw_errors`, `draw_err`, `draw_idle_s`). The installer's **Restart watch screen** button (Live log) sends the panel its power-on setup again and redraws, without restarting the watch.
 
+## v2.3.7
+
+- **Restart loop after turning Bluetooth on.** The crash log showed the Bluetooth controller failing to get internal RAM (`BLE_INIT: Malloc failed`), asserting, and the watchdog resetting the watch. Bluetooth was saved as on, so it started again on every boot and crashed again. Now Bluetooth is saved as on only once it has started, it stays off on the boot after a crash or watchdog reset, and it refuses to start (with an error in Settings and the status line) when internal RAM is below 64 KB free or 40 KB in one block, which also keeps room for the screen's transfers.
+- CI prints the firmware's SHA256 and decodes any backtrace in `tools/backtrace.txt` against the ELF it just built.
+
 ## v2.3.6
 
 - **White screen after a few minutes.** Since 2.3.3 an idle page sends the panel nothing at all. On 2.3.5 the status line showed one picture sent since boot. A few minutes without any transfer is when the panel turned white, while the watch itself kept running. The factory firmware animates constantly, so its panel is never idle. The watch now resends the whole picture after 5 s with nothing sent (`mx_panel.c`). That is one transfer every 5 s on a still page, against five a second before 2.3.3.

@@ -3,6 +3,7 @@
 #include "mx_net.h"
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
@@ -12,6 +13,9 @@
 
 static const char *TAG = "ble";
 #define BLE_NAME "Maximus OS"
+/* internal RAM the controller needs, plus what the display keeps for its transfers */
+#define BT_MIN_BLOCK (40 * 1024)
+#define BT_MIN_FREE  (64 * 1024)
 
 static bool s_on;
 static uint8_t s_addr_type;
@@ -70,6 +74,13 @@ bool mx_ble_set(bool on)
 {
     if (on == s_on) return true;
     if (on) {
+        /* the controller asserts (and the watchdog resets the watch) when its own
+         * internal allocation fails, so refuse up front while the screen still has room */
+        if (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < BT_MIN_BLOCK ||
+            heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < BT_MIN_FREE) {
+            mx_radio_failed("bluetooth", ESP_ERR_NO_MEM);
+            return false;
+        }
         esp_err_t r = nimble_port_init();
         if (r != ESP_OK) {
             mx_radio_failed("bluetooth", r);
