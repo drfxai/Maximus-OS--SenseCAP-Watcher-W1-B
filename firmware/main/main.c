@@ -26,6 +26,16 @@ int mx_disp_rows = -1;
 
 /* The board support package asks for the QSPI pixel clock through this hook
    (tools/fetch-deps.sh adds the weak default). Turbo doubles it. */
+/* Internal RAM left after each start-up step, in the serial and web log:
+   tells which part takes it when the watch runs short. */
+static void mem_step(const char *what)
+{
+    ESP_LOGI(TAG, "after %s: internal %u free (largest %u), PSRAM %u free", what,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
+
 uint32_t bsp_lcd_pclk_hz(void);
 
 /* Touch clean-up between the touch controller and LVGL. The SPD2010 now and
@@ -159,16 +169,21 @@ void app_main(void)
         return;
     }
     mx_disp_rows = rows;
+    mem_step("display");
     touch_filter_install();
     bsp_rtc_init();
     mx_rgb_start();
     mx_audio_init(mx_cfg()->volume);
+    mem_step("audio");
     mx_camera_init();
+    mem_step("camera");
     mx_net_start();
     mx_web_init();
+    mem_step("wifi");
     mx_console_start();
     mx_knob_start(mx_cfg()->knob_invert);
     mx_app_start();
+    mem_step("pages");
     ESP_LOGI(TAG, "Maximus OS %s up; internal %u free, DMA %u free", MX_FW_VERSION,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL));

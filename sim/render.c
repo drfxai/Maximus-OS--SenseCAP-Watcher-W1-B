@@ -17,8 +17,11 @@
 static uint32_t fb[W * H];
 static lv_color_t buf1[W * H];
 
+static long s_flushed;       /* pixels sent to the panel */
+
 static void flush(lv_disp_drv_t *d, const lv_area_t *a, lv_color_t *c)
 {
+    s_flushed += (long)(a->x2 - a->x1 + 1) * (a->y2 - a->y1 + 1);
     for (int y = a->y1; y <= a->y2; y++)
         for (int x = a->x1; x <= a->x2; x++) fb[y * W + x] = lv_color_to32(*c++);
     lv_disp_flush_ready(d);
@@ -279,6 +282,22 @@ int main(int argc, char **argv)
     press(150, 220); f_pt.x = 400; settle(20); release(); settle(400);
     printf("after glitch tap page %d (expect %d)\n", ui_page(), MX_PAGE_HOME);
     printf("final page %d (expect %d)\n", ui_page(), MX_PAGE_HOME);
+
+    /* An idle page must not redraw: on the panel every transfer shows as
+       faint vertical streaks for a few seconds. 4 s settled, then 3 s idle
+       with the firmware's 200 ms model refresh. */
+    m.cam_pix = NULL; m.assist = MX_ASSIST_IDLE;
+    int busy = 0;
+    for (int pg = 0; pg < MX_PAGE_COUNT; pg++) {
+        if (pg == MX_PAGE_CAMERA || pg == MX_PAGE_DTEST) continue;   /* live video; test pattern sequence */
+        ui_goto(pg, false);
+        for (int i = 0; i < 20; i++) { ui_refresh(); settle(200); }
+        s_flushed = 0;
+        for (int i = 0; i < 15; i++) { ui_refresh(); settle(200); }
+        if (s_flushed) { printf("idle redraw on page %d: %ld px in 3 s\n", pg, s_flushed); busy++; }
+    }
+    printf("idle pages redrawing: %d (expect 0)\n", busy);
+    if (busy) return 1;
     puts("ok");
     return 0;
 }

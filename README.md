@@ -117,3 +117,10 @@ The camera chip (Himax WE2) only drives the camera; it has no connection to the 
 - The draw buffers are sized to the DMA memory that is free (32 rows normally, down to 8), so running short slows drawing down instead of blanking the screen. The serial log prints the memory figures before the display starts, and `MAXIMUS_STATUS` reports `display` (rows, 0 = failed) and `dma_free`.
 - If the display still cannot start, the LED ring turns red and the serial console keeps working.
 - CI prints the firmware's static RAM use (`idf.py size`).
+
+## v2.3.3
+
+- **Fewer streaks**: the faint vertical streaks show while the panel receives a picture and fade a few seconds after it stops. Every page used to rewrite all its texts, colours and flags five times a second, and LVGL redrew each one even when nothing changed, so menus never went quiet. The setters now skip writes that change nothing (`ui/lv_quiet.c`, routed in by the linker), the journal wave only moves while recording, and the password cursor no longer blinks. The simulator checks that every idle page sends nothing to the panel for 3 s (`idle pages redrawing: 0`), and CI fails otherwise.
+- Redraw at about 33 fps, like Seeed's firmware, instead of 60: an animation sends half as many frames.
+- **Internal RAM**: LVGL's objects, about 6,700 small blocks for the Maximus pages, now live in PSRAM (`CONFIG_LV_MEM_CUSTOM_INCLUDE`, header written by `tools/fetch-deps.sh`). 2.3.2 ran down to 3 KB of free internal RAM. The boot log prints the free internal RAM after each start-up step.
+- The web console answers `/favicon.ico`, so browsers no longer leave a 404 in the log.

@@ -26,6 +26,22 @@ rm -rf "$dest/components/lvgl"
 git clone -q --depth 1 --branch "$LVGL_TAG" https://github.com/lvgl/lvgl.git "$dest/components/lvgl"
 rm -rf "$dest/components/lvgl/.git"
 printf 'version: "8.4.0"\ndescription: LVGL\n' > "$dest/components/lvgl/idf_component.yml"
+# LVGL's objects go to PSRAM (CONFIG_LV_MEM_CUSTOM_INCLUDE names this header).
+# Each is under 1 KB, so plain malloc put all of them, about 6,700 for the
+# Maximus pages, in internal RAM, and the watch ran down to 3 KB free there.
+# lv_mem.c includes this after lv_conf_internal.h, so the defines replace its
+# malloc/realloc/free defaults.
+cat > "$dest/components/lvgl/lv_mem_psram.h" <<'HDR'
+#pragma once
+#include <stdlib.h>
+#include "esp_heap_caps.h"
+#undef LV_MEM_CUSTOM_ALLOC
+#undef LV_MEM_CUSTOM_REALLOC
+#undef LV_MEM_CUSTOM_FREE
+#define LV_MEM_CUSTOM_ALLOC(s) heap_caps_malloc_prefer((s), 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_8BIT)
+#define LV_MEM_CUSTOM_REALLOC(p, s) heap_caps_realloc_prefer((p), (s), 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_8BIT)
+#define LV_MEM_CUSTOM_FREE(p) heap_caps_free(p)
+HDR
 # Upstream bug: the *_ALLOC_EXTERNAL guards in sscma_client_types.h and
 # sscma_client_ops.c are mismatched between monitor_task and process_task, so
 # the build breaks whichever option is set. Always declare the static task/stack

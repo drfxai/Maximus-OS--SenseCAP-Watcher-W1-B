@@ -135,6 +135,13 @@ static esp_err_t h_restart(httpd_req_t *r)
     return ESP_OK;
 }
 
+/* browsers ask for it on every visit; an empty answer keeps the 404 out of the log */
+static esp_err_t h_favicon(httpd_req_t *r)
+{
+    httpd_resp_set_status(r, "204 No Content");
+    return httpd_resp_send(r, NULL, 0);
+}
+
 static bool server_start(void)
 {
     if (s_srv) return true;
@@ -150,6 +157,7 @@ static bool server_start(void)
         { .uri = "/crash", .method = HTTP_GET, .handler = h_crash },
         { .uri = "/status", .method = HTTP_GET, .handler = h_status },
         { .uri = "/restart", .method = HTTP_POST, .handler = h_restart },
+        { .uri = "/favicon.ico", .method = HTTP_GET, .handler = h_favicon },
     };
     for (size_t i = 0; i < sizeof uris / sizeof *uris; i++) httpd_register_uri_handler(s_srv, &uris[i]);
     return true;

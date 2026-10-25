@@ -377,7 +377,11 @@ static void build_wifipass(void)
     lv_textarea_set_placeholder_text(wp_ta, "Password");
     lv_textarea_set_password_show_time(wp_ta, 900);
     lv_obj_clear_flag(wp_ta, LV_OBJ_FLAG_CLICKABLE);     /* the keyboard below types into it */
-    lv_obj_add_state(wp_ta, LV_STATE_FOCUSED);            /* keeps the cursor blinking */
+    lv_obj_add_state(wp_ta, LV_STATE_FOCUSED);            /* shows the cursor */
+    /* a steady cursor: a blinking one keeps the panel redrawing, which shows as streaks */
+    lv_obj_set_style_anim_time(wp_ta, 0, LV_PART_CURSOR);
+    lv_obj_set_style_anim_time(wp_ta, 0, LV_PART_CURSOR | LV_STATE_FOCUSED);
+    lv_textarea_set_cursor_pos(wp_ta, LV_TEXTAREA_CURSOR_LAST);   /* stops the blink already running */
     lv_obj_set_style_text_font(wp_ta, &lv_font_montserrat_16, 0);
     lv_obj_set_style_bg_color(wp_ta, C_PANEL, 0);
     lv_obj_set_style_text_color(wp_ta, C_TEXT, 0);
