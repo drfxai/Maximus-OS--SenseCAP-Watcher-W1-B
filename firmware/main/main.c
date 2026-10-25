@@ -10,6 +10,7 @@
 #include "sensecap-watcher.h"
 
 #include "esp_lvgl_port.h"
+#include "mx_panel.h"
 
 #include "mx_app.h"
 #include "mx_audio.h"
@@ -169,6 +170,7 @@ void app_main(void)
         return;
     }
     mx_disp_rows = rows;
+    mx_panel_keepalive_start();
     mem_step("display");
     touch_filter_install();
     bsp_rtc_init();

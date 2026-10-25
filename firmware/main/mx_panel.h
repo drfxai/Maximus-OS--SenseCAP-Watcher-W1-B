@@ -13,5 +13,8 @@ typedef struct {
 
 void mx_panel_stats(mx_panel_stats_t *out);
 
+/* Resends the picture whenever the panel has had nothing for 5 s. */
+void mx_panel_keepalive_start(void);
+
 /* Sends the panel its power-on setup again and redraws everything. */
 bool mx_panel_restart(void);
