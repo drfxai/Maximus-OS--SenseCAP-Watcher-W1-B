@@ -54,6 +54,8 @@ CONFIG_ESP_TLS_USING_MBEDTLS=y
 # LVGL 8
 CONFIG_LV_COLOR_16_SWAP=y
 CONFIG_LV_MEM_CUSTOM=y
+# objects in PSRAM, see tools/fetch-deps.sh
+CONFIG_LV_MEM_CUSTOM_INCLUDE="lv_mem_psram.h"
 CONFIG_LV_MEM_BUF_MAX_NUM=32
 CONFIG_LV_IMG_CACHE_DEF_SIZE=2
 CONFIG_LV_USE_PNG=y
@@ -71,9 +73,11 @@ CONFIG_LV_USE_TEXTAREA=y
 # No gradient dithering (the factory firmware has none): the error diffusion
 # pattern showed as fine vertical streaks on gradients.
 CONFIG_LV_DITHER_GRADIENT=n
-# ~60 fps redraw; touch read every 20 ms, which the touch controller keeps up
-# with (every 10 ms it repeated stale or glitched points)
-CONFIG_LV_DISP_DEF_REFR_PERIOD=16
+# ~33 fps redraw like Seeed's firmware: every panel transfer shows as faint
+# streaks, so an animation sends half the frames 60 fps did. Touch is read
+# every 20 ms, which the touch controller keeps up with (every 10 ms it
+# repeated stale or glitched points)
+CONFIG_LV_DISP_DEF_REFR_PERIOD=30
 CONFIG_LV_INDEV_DEF_READ_PERIOD=20
 CONFIG_LV_INDEV_DEF_SCROLL_LIMIT=8
 CONFIG_LV_INDEV_DEF_GESTURE_LIMIT=40

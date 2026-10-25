@@ -25,10 +25,18 @@ idf_component_register(
         "ui/ui_shell.c"
         "ui/ui_kb.c"
         "ui/assets.c"
+        "ui/lv_quiet.c"
     INCLUDE_DIRS "." "ui"
     PRIV_REQUIRES sensecap-watcher esp_lvgl_port lvgl sscma_client esp_jpeg_simd bt fatfs sdmmc nvs_flash esp_wifi esp_netif esp_event esp_http_client esp-tls mbedtls json
                   spiffs driver esp_timer esp_hw_support esp_system vfs esp_http_server espcoredump
 )
+
+# LVGL setters that skip writes which change nothing (ui/lv_quiet.c): an idle
+# page then sends nothing to the panel, whose transfers show as faint streaks.
+foreach(fn lv_obj_set_local_style_prop lv_label_set_text lv_label_set_text_fmt
+           lv_obj_add_flag lv_obj_clear_flag lv_chart_set_value_by_id)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=${fn}")
+endforeach()
 
 # The camera chip's firmware travels inside the flash image: everything in
 # firmware/spiffs (himax.img, put there by tools/fetch-deps.sh) becomes the

@@ -656,10 +656,14 @@ static void spark_to_chart(lv_obj_t *chart, lv_chart_series_t *ser, const mx_tic
         return;
     }
     lv_obj_clear_flag(chart, LV_OBJ_FLAG_HIDDEN);
+    bool changed = lv_chart_get_point_count(chart) != t->spark_n || ser->color.full != col.full;
     lv_chart_set_point_count(chart, t->spark_n);
     ser->color = col;
-    for (int i = 0; i < t->spark_n; i++) lv_chart_set_value_by_id(chart, ser, i, t->spark[i]);
-    lv_chart_refresh(chart);
+    for (int i = 0; i < t->spark_n; i++) {
+        if (ser->y_points[i] != t->spark[i]) changed = true;
+        lv_chart_set_value_by_id(chart, ser, i, t->spark[i]);
+    }
+    if (changed) lv_chart_refresh(chart);   /* an unchanged chart is not sent to the panel again */
 }
 
 static void market_refresh(void)
@@ -980,15 +984,18 @@ static void journal_refresh(void)
     }
     lv_label_set_text_fmt(j_meta, "%s%s%d saved", b, b[0] ? "  -  " : "", M->journal_count);
     static int phase;
-    phase++;
+    if (M->journal_rec) phase++;    /* the wave only moves while recording */
     for (int i = 0; i < 28; i++) {
         int amp = M->journal_rec ? (M->mic_level < 25 ? 25 : M->mic_level) : 55;
         int v = 50 + ((i * 37 + phase * 11) % 41 - 20) * amp / 40;
         lv_chart_set_value_by_id(j_wave, j_ser, i, v < 3 ? 3 : v);
     }
-    lv_chart_refresh(j_wave);
+    lv_color_t jc = M->journal_rec ? C_RED : C_BLUE;
+    if (M->journal_rec || ((lv_chart_series_t *)j_ser)->color.full != jc.full) {
+        ((lv_chart_series_t *)j_ser)->color = jc;
+        lv_chart_refresh(j_wave);
+    }
     lv_chart_set_type(j_wave, LV_CHART_TYPE_LINE);
-    ((lv_chart_series_t *)j_ser)->color = M->journal_rec ? C_RED : C_BLUE;
 }
 
 static void journal_confirm(void)
@@ -1111,7 +1118,6 @@ static void notes_refresh(void)
         note_style(M->notes[i].kind, &col, &ic);
         lv_obj_set_style_bg_color(lv_obj_get_child(L_notes.row[i], 0), col, 0);
         lv_label_set_text(L_notes.ic[i], ic);
-        ui_list_set(&L_notes, i, M->notes[i].title, M->notes[i].body, "");
         char tb[8] = "";
         if (M->notes[i].ts) {
             struct tm tmv;
@@ -1119,7 +1125,7 @@ static void notes_refresh(void)
             gmtime_r(&t, &tmv);
             snprintf(tb, sizeof tb, "%02d:%02d", tmv.tm_hour, tmv.tm_min);
         }
-        lv_label_set_text(L_notes.val[i], tb);
+        ui_list_set(&L_notes, i, M->notes[i].title, M->notes[i].body, tb);
         lv_obj_align(L_notes.val[i], LV_ALIGN_TOP_RIGHT, -12, 8);
     }
     L_notes.skip[MX_MAX_NOTES] = !P[MX_PAGE_NOTES].capture;   /* Back only while browsing */
