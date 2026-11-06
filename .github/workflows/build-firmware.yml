@@ -1,0 +1,71 @@
+name: Build Firmware
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ESP32-S3 Firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.2.5
+          target: esp32s3
+
+      - name: Fetch dependencies (Seeed BSP + LVGL)
+        run: |
+          cd firmware
+          ../tools/fetch-deps.sh
+
+      - name: Build firmware
+        run: |
+          cd firmware
+          idf.py build
+
+      - name: Create merged binary
+        run: |
+          cd firmware
+          # Create a single flashable binary at 0x0
+          esptool.py --chip esp32s3 merge_bin \
+            -o merged-firmware.bin \
+            --flash_mode qio \
+            --flash_freq 80m \
+            --flash_size 32MB \
+            0x0 build/bootloader/bootloader.bin \
+            0x8000 build/partition_table/partition-table.bin \
+            0x10000 build/maximus.bin
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: maximus-firmware
+          path: |
+            firmware/merged-firmware.bin
+            firmware/build/bootloader/bootloader.bin
+            firmware/build/partition_table/partition-table.bin
+            firmware/build/maximus.bin
+          retention-days: 30
+
+      - name: Show flash command
+        run: |
+          echo "=== Flash command (run on your machine) ==="
+          echo "esptool.py --chip esp32s3 --port COM6 --baud 921600 \\"
+          echo "  write_flash 0x0 bootloader.bin 0x8000 partition-table.bin 0x10000 maximus.bin"
+          echo ""
+          echo "Or use the single merged file:"
+          echo "esptool.py --chip esp32s3 --port COM6 --baud 921600 \\"
+          echo "  write_flash 0x0 merged-firmware.bin"
